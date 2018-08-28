@@ -112,14 +112,32 @@ def gumbel_pdf(x, loc, scale):
     return (1./scale) * (np.exp(-(z + (np.exp(-z)))))
 
 
+def fit_gumbel_ufunc(ndarray):
+    # https://stackoverflow.com/questions/23217484/how-to-find-parameters-of-gumbels-distribution-using-scipy-optimize
+    print(ndarray)
+    f = lambda p, x: (-np.log(gumbel_pdf(x, p[0], p[1]))).sum()
+    gumbel_params = scipy.optimize.fmin(f, [0.5,0.5], args=(ndarray,), disp=0)
+    return gumbel_params[0], gumbel_params[1]
+
+
 def step2_fit_gumbel(annual_maxs):
-    # ranks = annual_maxs.load().rank(dim='year').rename('rank')
+    # ranks = annual_maxs.load().rank(dim='year').rename('rank').astype('int16')
     # ds = xr.merge([ranks, annual_maxs])
     # print(ds)
-    # https://stackoverflow.com/questions/23217484/how-to-find-parameters-of-gumbels-distribution-using-scipy-optimize
-    f = lambda p, x: (-np.log(gumbel_pdf(x, p[0], p[1]))).sum()
-    gumbel_params = scipy.optimize.fmin(f, [0.5,0.5], args=(annual_maxs.values,))
-    print(gumbel_params)
+    # print(annual_maxs)
+    fitted = xr.apply_ufunc(fit_gumbel_ufunc, annual_maxs.load(),
+                            # dask='parallelized',
+                            output_dtypes=[float],
+                            input_core_dims=[['year']],
+                            # exclude_dims=[['year']],
+                            output_core_dims=[['loc', 'scale']]
+                            )
+    # print(fitted.load())
+    print(fitted.load())
+    print(fitted.values)
+    # loc = fitted.values[0]
+    # scale = fitted.values[1]
+    # print(loc, scale)
     # annual_maxs.plot()
     # plt.savefig('annual_max.png')
 
@@ -131,7 +149,7 @@ def main():
     with ProgressBar():
         # step1_write_annual_maxs()
         annual_maxs = step1bis_reorg_ds()
-        da_kampala = annual_maxs.loc[{'latitude':k_lat, 'longitude':k_lon, 'duration':6}]
+        da_kampala = annual_maxs.loc[{'latitude':k_lat, 'longitude':k_lon}]
 
         step2_fit_gumbel(da_kampala)
         # plot(da.mean(dim='time'))
