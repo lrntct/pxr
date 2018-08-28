@@ -12,18 +12,8 @@ from cf_units import Unit
 import xarray as xr
 import dask
 from dask.diagnostics import ProgressBar
-# import cfgrib
-# from cfgrib import xarray_store
 import zarr
-# from dask.distributed import Client
 
-import seaborn as sns
-import cartopy as ctpy
-import matplotlib
-import matplotlib.pyplot as plt
-plt.switch_backend('agg')
-
-from pyinstrument import Profiler
 
 GRIB_DIR = '/home/lunet/gylc4/geodata/ERA5/monthly'
 ZARR_DIR = '/home/lunet/gylc4/geodata/ERA5/monthly_zarr'
@@ -31,22 +21,16 @@ DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
 LONG_NAME = "Mean total precipitation rate"
 VAR_NAME = 'precipitation'
 UNIT = 'kg m-2 s-1'
-NUM_CHUNKS = 8
-CHUNK_SIZE = 15  # in degree
 
-YEAR_START = 2001
+YEAR_START = 2000
 YEAR_END = 2012
 
 FILE_CONCAT_PREFIX = 'era5_precip'
 
-# Coordinates of study sites
-KAMPALA = (0.317, 32.616)
-KISUMU = (-0.1, 34.75)
-
-DURATION = [3, 6, 12, 24]
-
-# Spatial resolution in degree - used for match coordinates
-SPATIAL_RES = 0.25
+ZARR_CHUNKS = {'time': 365*24, 'latitude': 8, 'longitude': 8}  # 8: 2deg
+ZARR_ENCODING = {'precipitation': {'dtype': 'float32', 'compressor': zarr.Blosc(cname='lz4', clevel=9)},
+                 'latitude': {'dtype': 'float32'},
+                 'longitude': {'dtype': 'float32'}}
 
 # storage encoding
 encoding_float32 = {VAR_NAME: {'dtype': 'float32'},
@@ -67,33 +51,6 @@ compressors = {'uncompressed': None,
                'lz4': zarr.Blosc(cname='lz4', clevel=9),
                'lz4hc': zarr.Blosc(cname='lz4hc', clevel=9)}
 
-
-def chunks_list(extent, chunk_size):
-    if extent==180:
-        start_point = -extent/2
-    elif extent==360:
-        start_point = 0
-    else:
-        raise ValueError()
-    start_chunks = [start_point + i * CHUNK_SIZE for i in range((extent // chunk_size))]
-    return [(float(i), float(i+chunk_size)) for i in start_chunks]
-
-
-def coor_name(coor, lower, higher):
-    if coor < 0:
-        return '{}{}'.format(int(abs(coor)), lower)
-    else:
-        return '{}{}'.format(int(coor), higher)
-
-
-def out_filename(lat_chunk, lon_chunk):
-    w = coor_name(lon_chunk[0], 'w', 'e')
-    e = coor_name(lon_chunk[1], 'w', 'e')
-    s = coor_name(lat_chunk[0], 's', 'n')
-    n = coor_name(lat_chunk[1], 's', 'n')
-    return '{}{}{}{}.zarr'.format(w,e,s,n)
-
-
 def list_gribs(years):
     grib_list = []
     for year in years:
@@ -101,10 +58,6 @@ def list_gribs(years):
             file_name = '{}-{}.grib'.format(year, month)
             grib_list.append(os.path.join(GRIB_DIR, file_name))
     return grib_list
-
-
-def round_partial(value):
-    return round(value / SPATIAL_RES) * SPATIAL_RES
 
 
 def sanitise_cube(cube):
@@ -120,24 +73,6 @@ def sanitise_cube(cube):
     cube.var_name = VAR_NAME
     for coord in cube.coords():
         coord.var_name = coord.name()
-
-
-def plot(da):
-    """https://cbrownley.wordpress.com/2018/05/15/visualizing-global-land-temperatures-in-python-with-scrapy-xarray-and-cartopy/
-    """
-    plt.figure(figsize=(5, 3))
-    ax_p = plt.gca(projection=ctpy.crs.Robinson(), aspect='auto')
-    ax_p.coastlines(linewidth=.3, color='black')
-    da.mean(dim='time').plot.imshow(ax=ax_p, transform=ctpy.crs.PlateCarree(),
-                                   extend='max', vmax=20,
-                                   cbar_kwargs=dict(orientation='horizontal',
-                                                    label='Precipitation rate (mm/hr)'))
-    # colorbar
-    # cbar = plt.colorbar(temp_plot, orientation='horizontal')
-    # cbar.set_label(label='Precipitation rate (mm/hr)')
-    plt.title("Mean hourly precipitation in 2000 (ERA5)")
-    plt.savefig('max.png')
-    plt.close()
 
 
 # def compare_nc_encoding():
@@ -234,19 +169,17 @@ def compare_zarr():
 def grib2zarr(grib_path):
     """transform grib to zarr
     """
-    chunks = {'time': -1, 'latitude': 20, 'longitude': 20}
-    encoding = encoding_float16
-    encoding[VAR_NAME]['compressor'] = zarr.Blosc(cname='lz4', clevel=9)
-    # grib_file = '{}.grib'.format(name)
-    basename = os.path.splitext(grib_path)[0]
-    zarr_filename = '{}.zarr'.format(basename)
-    # grib_path = os.path.join(GRIB_DIR, grib_file)
     # load grib as xarray
     cube = iris.load_cube(grib_path)
     sanitise_cube(cube)
-    da = xr.DataArray.from_iris(cube).chunk(chunks)
+    da = xr.DataArray.from_iris(cube).chunk(ZARR_CHUNKS)
+    # mm/hr
+    da_hr = da * 3600.
+    basename = os.path.splitext(os.path.basename(grib_path))[0]
+    zarr_filename = '{}.zarr'.format(basename)
     out_file_path = os.path.join(ZARR_DIR, zarr_filename)
-    da.to_dataset().to_zarr(out_file_path, encoding=encoding)
+    print(out_file_path)
+    da_hr.to_dataset().to_zarr(out_file_path, mode='w', encoding=ZARR_ENCODING)
 
 
 def gribs2zarr(years):
@@ -255,180 +188,26 @@ def gribs2zarr(years):
         grib2zarr(grib)
 
 
-def grib2grib(years):
-    """
-    """
-    for year in years:
-        grib_file = '{}.grib'.format(year)
-        out_file = '{}.grib2'.format(year)
-        grib_path = os.path.join(DATA_DIR, grib_file)
-        # load grib as xarray
-        cube = iris.load_cube(grib_path)
-        sanitise_cube(cube)
-        out_file_path = os.path.join(DATA_DIR, out_file)
-        iris.save(cube, out_file_path)
-
-
-def load_grib2(years):
-    """
-    """
-    chunks = {'time': -1, 'latitude': 'auto', 'longitude': 'auto'}
-    for year in years:
-        grib_file = '{}.grib2'.format(year)
-        grib_path = os.path.join(DATA_DIR, grib_file)
-        # load grib as xarray
-        cube = iris.load_cube(grib_path)
-        sanitise_cube(cube)
-        da = xr.DataArray.from_iris(cube).chunk(chunks)
-        print(da.time.values)
-
-
-def concat2zarr(years):
-    """
-    convert to mm/hr
-    concatenate
-    """
-    chunks = {'time': -1, 'latitude': 90, 'longitude': 90}
-    encoding = encoding_float16
-    encoding[VAR_NAME]['compressor'] = zarr.Blosc(cname='lz4', clevel=9)
-    da_list = []
-    cube = iris.load_cube(list_gribs(years))
-    # print(cubes)
-    # cube = cubes.concatenate_cube()
-    sanitise_cube(cube)
-    print(cube)
-    da = xr.DataArray.from_iris(cube)
-    print(da)
-    out_filename = '{}_{}-{}.nc'.format(FILE_CONCAT_PREFIX, YEAR_START, YEAR_END)
-    out_file_path = os.path.join(DATA_DIR, out_filename)
-    # iris.save(cube, out_file_path)
-    dask.visualize(da, filename='da.svg')
-    # da.to_dataset().to_zarr(out_file_path, encoding=encoding)
-        # ds = cfgrib.Dataset.frompath(grib_path)
-        # da = xr.open_zarr(input_path).precipitation
-        # da = xarray_store.open_dataset(input_path).to_array(dim=VAR_NAME).chunk(chunks)
-        # print(da)
-    #     da_list.append(da*3600.)
-    #
-    # print("concat...")
-    # da_large = xr.concat(da_list, dim='time')
-
-    # da_large.to_dataset().to_zarr(out_file_path, encoding=encoding)
-
-
 def xarray_concat_zarr(zarr_path):
-    chunks = {'time': 365*24, 'latitude': 10, 'longitude': 10}
-    encoding = {'precipitation': {'dtype': 'float16', 'compressor': zarr.Blosc(cname='lz4', clevel=9)},
-                'latitude': {'dtype': 'float32'},
-                'longitude': {'dtype': 'float32'}}
     da_list = []
     for zarr_store in os.listdir(zarr_path):
         zarr_store_path = os.path.join(zarr_path, zarr_store)
         da = xr.open_zarr(zarr_store_path)
         da_list.append(da)
-    da_full = xr.auto_combine(da_list).chunk(chunks)
+    da_full = xr.auto_combine(da_list).chunk(ZARR_CHUNKS)
     print(da_full)
     out_path = os.path.join(DATA_DIR, '{}.zarr'.format(FILE_CONCAT_PREFIX))
-    da_full.to_zarr(out_path, mode='w', encoding=encoding)
-
-
-def netcdf2zarr(path):
-    chunks = {'time': -1, 'lat': 'auto', 'lon': 'auto'}
-    encoding = {'mtpr': {'dtype': 'float16', 'compressor': zarr.Blosc(cname='lz4', clevel=9)},
-                'lat': {'dtype': 'float32'},
-                'lon': {'dtype': 'float32'}}
-    ds = xr.open_dataset(path, chunks=chunks)
-    da_mean = ds.mtpr.mean(dim='time')
-    print(ds.mtpr)
-    # print(list(ds.lon))
-    # print(ds.mtpr.encoding)
-
-    # print(da_mean.compute())
-    # for c in ds.mtpr:
-    #     print(c)
-    # dask.visualize(da_mean, filename='mean.png')
-
-    lon_chunks = chunks_list(360, CHUNK_SIZE)
-    lat_chunks = chunks_list(180, CHUNK_SIZE)
-    # print(lon_chunks, lat_chunks)
-    print('number of chunks: {}'.format(len(lon_chunks)*len(lat_chunks)))
-    for lat_chunk in lat_chunks:
-        for lon_chunk in lon_chunks:
-            print(lat_chunk, lon_chunk)
-            ds_part = ds.sel(lat=slice(lat_chunk[1], lat_chunk[0]), lon=slice(*lon_chunk)).chunk(chunks)
-            out_path = os.path.join(DATA_DIR, out_filename(lat_chunk, lon_chunk))
-            print(out_path)
-            print(ds_part)
-            # ds_part.to_zarr(out_path, encoding=encoding)
-            break
-        break
-
-
-def dask_netcdf(nc_path):
-    chunks = {'time': -1, 'lat': 'auto', 'lon': 'auto'}
-    encoding = {'mtpr': {'dtype': 'float16', 'compressor': zarr.Blosc(cname='lz4', clevel=9)},
-                'lat': {'dtype': 'float32'},
-                'lon': {'dtype': 'float32'}}
-    nc_store = netCDF4.Dataset(nc_path, "r", format="NETCDF4")
-    da = dask.array.from_array(nc_store, chunks=chunks)
-    print(da)
-
-
-def compare_chunks(nc_path):
-    profiler = Profiler()
-    chunks_lst = [{'lon': 30}
-                  ]
-    for chunks in chunks_lst:
-        print(chunks)
-        profiler.start()
-        with xr.open_dataset(nc_path, chunks=chunks) as ds:
-            print(ds.mean(dim='time').load())
-            # print(ds)
-        profiler.stop()
-        print(profiler.output_text(unicode=True, color=True))
-
-
-def xarray_roll_win(zarr_path):
-    ds = xr.open_zarr(zarr_path)
-    print(ds)
-    ds_mean = ds.mean()
-    print(ds_mean)
+    da_full.to_zarr(out_path, mode='w', encoding=ZARR_ENCODING)
 
 
 def main():
     # compare_zarr()
     # compare_grib()
     years = range(YEAR_START, YEAR_END+1)
-    # print('grib2grib')
-    # grib2grib(years)
-    # print('grib2zarr')
 
-    # rolling window analysis - 3h max
-    # cube_agreg = cube.rolling_window('time', iris.analysis.MAX, 3)
-    # print(cube_agreg)
-    # client = Client()
-    # client
     with ProgressBar():
-        # netcdf2zarr(os.path.join(DATA_DIR, 'era5_precip.nc'))
-        # dask_netcdf(os.path.join(DATA_DIR, 'era5_precip_2000.nc'))
         # gribs2zarr(years)
         xarray_concat_zarr(ZARR_DIR)
-        # zarr_path = os.path.join(DATA_DIR, 'era5_precip2000.zarr')
-        # plot(xr.open_zarr(zarr_path).precipitation)
-        # xarray_roll_win(())
-
-
-    # compare_chunks('/home/laurent/Documents/GeoData/ERA5/era5_precip.nc')
-
-    # concat2netcdf(years)
-
-    # kampala
-    # k_lat = round_partial(KAMPALA[0])
-    # k_lon = round_partial(KAMPALA[1])
-    # Print from the original file
-    # series_kampala_diff = dc_diff.sel(**{'latitude':k_lat, 'longitude':k_lon})
-
-
 
 
 if __name__ == "__main__":
