@@ -38,7 +38,7 @@ DURATIONS = [3, 6, 12, 24]
 TEMP_RES = 1  # Temporal resolution in hours
 
 HOURLY_CHUNKS = {'time': 365*24, 'latitude': 8, 'longitude': 8}
-ANNUAL_CHUNKS = {'year': -1, 'duration':1, 'latitude': 30*4, 'longitude': 30*4}  # 4 cells: 1 degree
+ANNUAL_CHUNKS = {'year': -1, 'duration':1, 'latitude': 45*4, 'longitude': 45*4}  # 4 cells: 1 degree
 ANNUAL_ENCODING = {'precipitation': {'dtype': 'float32', 'compressor': zarr.Blosc(cname='lz4', clevel=9)},
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'}}
@@ -109,21 +109,19 @@ def annual_linregress(ds, x, y, prefix):
     x, y: name of variables to use for the regression
     prefix: to be added before the indivudual result names
     """
-    # add empty arrays to store results of the regression
-    res_shape = tuple(v for k,v in ds[x].sizes.items() if k != 'year')
-    res_dims = tuple(k for k,v in ds[x].sizes.items() if k != 'year')
-    for res_name in ['slope', 'intercept', 'rvalue', 'pvalue', 'stderr']:
-        arr_name = '{}_{}'.format(prefix, res_name)
-        ds[arr_name] = (res_dims, np.zeros(res_shape, dtype='float32'))
-    for lat in ds.coords['latitude']:
-        for lon in ds.coords['longitude']:
-            for duration in ds.coords['duration']:
-                locator = {'longitude':lon, 'latitude':lat, 'duration':duration}
-                sel = ds.loc[locator]
-                res = scipy.stats.linregress(sel[x], sel[y])
-                for k, v in res._asdict().items():
-                    arr_name = '{}_{}'.format(prefix, k)
-                    ds[arr_name].loc[locator] = v
+    lr_params = ['slope', 'intercept', 'rvalue', 'pvalue', 'stderr']
+    array_names = ['{}_{}'.format(prefix, n) for n in lr_params]
+    # return a tuple of DataArrays
+    res = xr.apply_ufunc(scipy.stats.linregress, ds[x], ds[y],
+            input_core_dims=[['year'], ['year']],
+            output_core_dims=[[], [], [], [], []],
+            vectorize=True,
+            # dask='parallelized',
+            output_dtypes=['float32' for i in range(5)]
+            )
+    # add the data to the existing dataset
+    for arr_name, arr in zip(array_names, res):
+        ds[arr_name] = arr
 
 
 def double_log(arr):
@@ -139,24 +137,24 @@ def step2_gumbel_fit(annual_maxs):
     """
     # Rank the observations in time
     ranks = annual_maxs.load().rank(dim='year').rename('rank').astype('int16')
-    ds = xr.merge([annual_maxs, ranks])
+    ds = xr.merge([annual_maxs, ranks])  # .chunk(ANNUAL_CHUNKS)
     # Estimate probability F{x} with plotting positions
     n_obs = ds.annual_max.count(dim='year')
     ds['plot_pos'] = (ds['rank'] / (n_obs+1)).astype('float32')
     ds['gumbel_prov'] = double_log(ds['plot_pos'])
     # First fit
-    annual_linregress(ds, 'annual_max', 'gumbel_prov', 'prov_lg')
+    annual_linregress(ds, 'annual_max', 'gumbel_prov', 'prov_lr')
     # get provisional gumbel parameters
-    ds['loc_prov'] = -ds['prov_lg_intercept']/ds['prov_lg_slope']
-    ds['scale_prov'] = -1/ds['prov_lg_slope']
+    ds['loc_prov'] = -ds['prov_lr_intercept']/ds['prov_lr_slope']
+    ds['scale_prov'] = -1/ds['prov_lr_slope']
     # Analytic probability F(x) from Gumbel CDF
     z = (ds['annual_max'] - ds['loc_prov']) / ds['scale_prov']
     ds['gumbel_cdf'] = np.e**(-np.e**-z)
     # Get the final location and scale parameters
     ds['gumbel_final'] = double_log(ds['gumbel_cdf'])
-    annual_linregress(ds, 'annual_max', 'gumbel_final', 'final_lg')
-    ds['loc_final'] = -ds['final_lg_intercept']/ds['final_lg_slope']
-    ds['scale_final'] = -1/ds['final_lg_slope']
+    annual_linregress(ds, 'annual_max', 'gumbel_final', 'final_lr')
+    ds['loc_final'] = -ds['final_lr_intercept']/ds['final_lr_slope']
+    ds['scale_final'] = -1/ds['final_lr_slope']
 
     # save to disk
     out_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
@@ -169,8 +167,9 @@ def benchmark(ds):
     print result to stdout
     """
     duration_list = []
-    for i in range(5):
-        degrees = (i+1)*5
+    sizes = [(i+1)*5 for i in range(5)]
+    sizes_sq = [i*i for i in sizes]
+    for degrees in sizes:
         locator = dict(latitude=slice(degrees, 0),  # Latitudes are in descending order
                        longitude=slice(0, degrees))
         sel = ds.loc[locator]
@@ -178,7 +177,15 @@ def benchmark(ds):
         step2_gumbel_fit(sel)
         duration = datetime.datetime.now() - start
         duration_list.append(duration)
-    print(duration_list)
+    dur_sec = [d.total_seconds() for d in duration_list]
+    print({k:v for k, v in zip(sizes_sq, dur_sec)})
+
+    plt.scatter(x=sizes_sq, y=dur_sec)
+    plt.xlabel('Size in squared degrees')
+    plt.ylabel('Duration in seconds')
+    plt.savefig('benchmark_apply.png')
+    plt.close()
+
 
 def main():
     kampala_locator = {'latitude': round_partial(KAMPALA[0]),
