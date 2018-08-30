@@ -4,7 +4,7 @@ matplotlib.use("Agg")
 
 import sys
 import os
-from datetime import datetime
+import datetime
 
 import numpy as np
 import xarray as xr
@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
 HOURLY_FILE = 'era5_precip_big_chunks.zarr'
 ANNUAL_FILE = 'era5_precip_annual_max.zarr'
-ANNUAL_FILE_GUMBEL = 'era5_precip_gumbel.zarr'
+ANNUAL_FILE_GUMBEL = 'era5_precip_gumbel.nc'
 
 # Coordinates of study sites
 KAMPALA = (0.317, 32.616)
@@ -38,7 +38,7 @@ DURATIONS = [3, 6, 12, 24]
 TEMP_RES = 1  # Temporal resolution in hours
 
 HOURLY_CHUNKS = {'time': 365*24, 'latitude': 8, 'longitude': 8}
-ANNUAL_CHUNKS = {'year': -1, 'latitude': 30*4, 'longitude': 30*4}  # 4 cells: 1 degree
+ANNUAL_CHUNKS = {'year': -1, 'duration':1, 'latitude': 30*4, 'longitude': 30*4}  # 4 cells: 1 degree
 ANNUAL_ENCODING = {'precipitation': {'dtype': 'float32', 'compressor': zarr.Blosc(cname='lz4', clevel=9)},
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'}}
@@ -104,25 +104,26 @@ def step1bis_reorg_ds():
     return da_full
 
 
-def annual_linregress(ds, x, y, sl, inter):
+def annual_linregress(ds, x, y, prefix):
     """ds: xarray dataset
     x, y: name of variables to use for the regression
-    sl, inter: variable names to be created
+    prefix: to be added before the indivudual result names
     """
     # add empty arrays to store results of the regression
     res_shape = tuple(v for k,v in ds[x].sizes.items() if k != 'year')
     res_dims = tuple(k for k,v in ds[x].sizes.items() if k != 'year')
-    ds[sl] = (res_dims, np.empty(res_shape, dtype='float32'))
-    ds[inter] = (res_dims, np.empty(res_shape, dtype='float32'))
+    for res_name in ['slope', 'intercept', 'rvalue', 'pvalue', 'stderr']:
+        arr_name = '{}_{}'.format(prefix, res_name)
+        ds[arr_name] = (res_dims, np.zeros(res_shape, dtype='float32'))
     for lat in ds.coords['latitude']:
         for lon in ds.coords['longitude']:
             for duration in ds.coords['duration']:
                 locator = {'longitude':lon, 'latitude':lat, 'duration':duration}
                 sel = ds.loc[locator]
                 res = scipy.stats.linregress(sel[x], sel[y])
-                ds[sl].loc[locator] = res.slope
-                ds[inter].loc[locator] = res.intercept
-                slope, intercept, r_value, p_value, std_err  = res
+                for k, v in res._asdict().items():
+                    arr_name = '{}_{}'.format(prefix, k)
+                    ds[arr_name].loc[locator] = v
 
 
 def double_log(arr):
@@ -144,23 +145,40 @@ def step2_gumbel_fit(annual_maxs):
     ds['plot_pos'] = (ds['rank'] / (n_obs+1)).astype('float32')
     ds['gumbel_prov'] = double_log(ds['plot_pos'])
     # First fit
-    annual_linregress(ds, 'annual_max', 'gumbel_prov', 'slope1', 'intercept1')
+    annual_linregress(ds, 'annual_max', 'gumbel_prov', 'prov_lg')
     # get provisional gumbel parameters
-    ds['loc_prov'] = -ds['intercept1']/ds['slope1']
-    ds['scale_prov'] = -1/ds['slope1']
+    ds['loc_prov'] = -ds['prov_lg_intercept']/ds['prov_lg_slope']
+    ds['scale_prov'] = -1/ds['prov_lg_slope']
     # Analytic probability F(x) from Gumbel CDF
     z = (ds['annual_max'] - ds['loc_prov']) / ds['scale_prov']
     ds['gumbel_cdf'] = np.e**(-np.e**-z)
     # Get the final location and scale parameters
     ds['gumbel_final'] = double_log(ds['gumbel_cdf'])
-    annual_linregress(ds, 'annual_max', 'gumbel_final', 'slope2', 'intercept2')
-    ds['loc_final'] = -ds['intercept2']/ds['slope2']
-    ds['scale_final'] = -1/ds['slope2']
+    annual_linregress(ds, 'annual_max', 'gumbel_final', 'final_lg')
+    ds['loc_final'] = -ds['final_lg_intercept']/ds['final_lg_slope']
+    ds['scale_final'] = -1/ds['final_lg_slope']
 
     # save to disk
     out_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
-    ds.chunk(ANNUAL_CHUNKS).to_zarr(out_path, mode='w')
+    chunked = ds.chunk(ANNUAL_CHUNKS)
+    chunked.to_netcdf(out_path, mode='w')
 
+
+def benchmark(ds):
+    """Run the gumbel fit for a number of extract sizes
+    print result to stdout
+    """
+    duration_list = []
+    for i in range(5):
+        degrees = (i+1)*5
+        locator = dict(latitude=slice(degrees, 0),  # Latitudes are in descending order
+                       longitude=slice(0, degrees))
+        sel = ds.loc[locator]
+        start = datetime.datetime.now()
+        step2_gumbel_fit(sel)
+        duration = datetime.datetime.now() - start
+        duration_list.append(duration)
+    print(duration_list)
 
 def main():
     kampala_locator = {'latitude': round_partial(KAMPALA[0]),
@@ -176,8 +194,8 @@ def main():
         an_max_extract = annual_maxs.loc[EXTRACT]
         # print(da_extract.load())
         # print(kampala_hourly)
-        step2_gumbel_fit(annual_maxs)
-        # print(ds)
+        step2_gumbel_fit(an_max_extract)
+        # benchmark(annual_maxs)
 
         # kamp_6 = ds.loc[kampala_locator]
         # plt.figure(figsize=(8, 5))
