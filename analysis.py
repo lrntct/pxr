@@ -11,7 +11,7 @@ import xarray as xr
 import dask
 from dask.diagnostics import ProgressBar
 import zarr
-import scipy.optimize
+import scipy
 
 import seaborn as sns
 import cartopy as ctpy
@@ -20,15 +20,16 @@ import matplotlib.pyplot as plt
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
 HOURLY_FILE = 'era5_precip_big_chunks.zarr'
 ANNUAL_FILE = 'era5_precip_annual_max.zarr'
+ANNUAL_FILE_GUMBEL = 'era5_precip_gumbel.zarr'
 
 # Coordinates of study sites
 KAMPALA = (0.317, 32.616)
-KISUMU = (-0.1, 34.75)
+KISUMU = (0.1, 34.75)
 # Extract
-# EXTRACT = dict(latitude=slice(1.0, -0.25),
-#                longitude=slice(32, 35))
-EXTRACT = dict(latitude=slice(45, -45),
-               longitude=slice(0, 90))
+EXTRACT = dict(latitude=slice(1.0, -0.25),
+               longitude=slice(32.5, 35))
+# EXTRACT = dict(latitude=slice(45, -45),
+#                longitude=slice(0, 90))
 # Spatial resolution in degree - used for match coordinates
 SPATIAL_RES = 0.25
 
@@ -103,55 +104,94 @@ def step1bis_reorg_ds():
     return da_full
 
 
-def gumbel_pdf(x, loc, scale):
-    """Returns the value of Gumbel's pdf with parameters loc and scale at x.
-    https://stackoverflow.com/questions/23217484/how-to-find-parameters-of-gumbels-distribution-using-scipy-optimize
+def annual_linregress(ds, x, y, sl, inter):
+    """ds: xarray dataset
+    x, y: name of variables to use for the regression
+    sl, inter: variable names to be created
     """
-    # substitute
-    z = (x - loc)/scale
-    return (1./scale) * (np.exp(-(z + (np.exp(-z)))))
+    # add empty arrays to store results of the regression
+    res_shape = tuple(v for k,v in ds[x].sizes.items() if k != 'year')
+    res_dims = tuple(k for k,v in ds[x].sizes.items() if k != 'year')
+    ds[sl] = (res_dims, np.empty(res_shape, dtype='float32'))
+    ds[inter] = (res_dims, np.empty(res_shape, dtype='float32'))
+    for lat in ds.coords['latitude']:
+        for lon in ds.coords['longitude']:
+            for duration in ds.coords['duration']:
+                locator = {'longitude':lon, 'latitude':lat, 'duration':duration}
+                sel = ds.loc[locator]
+                res = scipy.stats.linregress(sel[x], sel[y])
+                ds[sl].loc[locator] = res.slope
+                ds[inter].loc[locator] = res.intercept
+                slope, intercept, r_value, p_value, std_err  = res
 
 
-def fit_gumbel_ufunc(ndarray):
-    # https://stackoverflow.com/questions/23217484/how-to-find-parameters-of-gumbels-distribution-using-scipy-optimize
-    print(ndarray)
-    f = lambda p, x: (-np.log(gumbel_pdf(x, p[0], p[1]))).sum()
-    gumbel_params = scipy.optimize.fmin(f, [0.5,0.5], args=(ndarray,), disp=0)
-    return gumbel_params[0], gumbel_params[1]
+def double_log(arr):
+    return (np.log(np.log(1/arr))).astype('float32')
 
 
-def step2_fit_gumbel(annual_maxs):
-    # ranks = annual_maxs.load().rank(dim='year').rename('rank').astype('int16')
-    # ds = xr.merge([ranks, annual_maxs])
-    # print(ds)
-    # print(annual_maxs)
-    fitted = xr.apply_ufunc(fit_gumbel_ufunc, annual_maxs.load(),
-                            # dask='parallelized',
-                            output_dtypes=[float],
-                            input_core_dims=[['year']],
-                            # exclude_dims=[['year']],
-                            output_core_dims=[['loc', 'scale']]
-                            )
-    # print(fitted.load())
-    print(fitted.load())
-    print(fitted.values)
-    # loc = fitted.values[0]
-    # scale = fitted.values[1]
-    # print(loc, scale)
-    # annual_maxs.plot()
-    # plt.savefig('annual_max.png')
+def step2_gumbel_fit(annual_maxs):
+    """Follow the steps described in:
+    Loaiciga, H. A., & Leipnik, R. B. (1999).
+    Analysis of extreme hydrologic events with Gumbel distributions: marginal and additive cases.
+    Stochastic Environmental Research and Risk Assessment (SERRA), 13(4), 251–259.
+    https://doi.org/10.1007/s004770050042
+    """
+    # Rank the observations in time
+    ranks = annual_maxs.load().rank(dim='year').rename('rank').astype('int16')
+    ds = xr.merge([annual_maxs, ranks])
+    # Estimate probability F{x} with plotting positions
+    n_obs = ds.annual_max.count(dim='year')
+    ds['plot_pos'] = (ds['rank'] / (n_obs+1)).astype('float32')
+    ds['gumbel_prov'] = double_log(ds['plot_pos'])
+    # First fit
+    annual_linregress(ds, 'annual_max', 'gumbel_prov', 'slope1', 'intercept1')
+    # get provisional gumbel parameters
+    ds['loc_prov'] = -ds['intercept1']/ds['slope1']
+    ds['scale_prov'] = -1/ds['slope1']
+    # Analytic probability F(x) from Gumbel CDF
+    z = (ds['annual_max'] - ds['loc_prov']) / ds['scale_prov']
+    ds['gumbel_cdf'] = np.e**(-np.e**-z)
+    # Get the final location and scale parameters
+    ds['gumbel_final'] = double_log(ds['gumbel_cdf'])
+    annual_linregress(ds, 'annual_max', 'gumbel_final', 'slope2', 'intercept2')
+    ds['loc_final'] = -ds['intercept2']/ds['slope2']
+    ds['scale_final'] = -1/ds['slope2']
+
+    # save to disk
+    out_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
+    ds.chunk(ANNUAL_CHUNKS).to_zarr(out_path, mode='w')
 
 
 def main():
-    # location of kampala
-    k_lat = round_partial(KAMPALA[0])
-    k_lon = round_partial(KAMPALA[1])
+    kampala_locator = {'latitude': round_partial(KAMPALA[0]),
+                       'longitude': round_partial(KAMPALA[1]),
+                       'duration': 6}
     with ProgressBar():
+        # hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
+        # hourly = xr.open_zarr(hourly_path).chunk(HOURLY_CHUNKS)
+        # kampala_hourly = hourly.loc[KAMPALA]
         # step1_write_annual_maxs()
         annual_maxs = step1bis_reorg_ds()
-        da_kampala = annual_maxs.loc[{'latitude':k_lat, 'longitude':k_lon}]
+        da_kampala = annual_maxs.loc[kampala_locator]
+        an_max_extract = annual_maxs.loc[EXTRACT]
+        # print(da_extract.load())
+        # print(kampala_hourly)
+        step2_gumbel_fit(annual_maxs)
+        # print(ds)
 
-        step2_fit_gumbel(da_kampala)
+        # kamp_6 = ds.loc[kampala_locator]
+        # plt.figure(figsize=(8, 5))
+        # ax = plt.gca()
+        # # # kamp_6.plot_pos.plot(ax=ax)
+        # plt.scatter(kamp_6.annual_max, kamp_6.gumbel_final)
+        # x1 = np.linspace(np.min(kamp_6.annual_max), np.max(kamp_6.annual_max), 500)
+        # fit_line = kamp_6.slope2 * kamp_6.annual_max + kamp_6.intercept2
+        # plt.plot(kamp_6.annual_max, fit_line, '-r')
+        # # # plt.scatter(kamp_6.annual_max, kamp_6.plot_pos)
+        # plt.savefig('kampala.png')
+        # plt.close()
+
+        # step2_gumbel_params(da_extract)
         # plot(da.mean(dim='time'))
 
 
