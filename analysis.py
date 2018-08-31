@@ -33,8 +33,8 @@ EXTRACT = dict(latitude=slice(1.0, -0.25),
 # Spatial resolution in degree - used for match coordinates
 SPATIAL_RES = 0.25
 
-# Event duration in hours - has to be adjusted to temporal resolution
-DURATIONS = [3, 6, 12, 24]
+# Event durations in hours - has to be adjusted to temporal resolution
+DURATIONS = [i+1 for i in range(24)] + [i for i in range(24,72+6,6)]
 TEMP_RES = 1  # Temporal resolution in hours
 
 HOURLY_CHUNKS = {'time': 365*24, 'latitude': 8, 'longitude': 8}
@@ -43,25 +43,9 @@ ANNUAL_ENCODING = {'precipitation': {'dtype': 'float32', 'compressor': zarr.Blos
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'}}
 
+
 def round_partial(value):
     return round(value / SPATIAL_RES) * SPATIAL_RES
-
-
-def plot_mean(da):
-    """https://cbrownley.wordpress.com/2018/05/15/visualizing-global-land-temperatures-in-python-with-scrapy-xarray-and-cartopy/
-    """
-    plt.figure(figsize=(8, 5))
-    ax_p = plt.gca(projection=ctpy.crs.Robinson(), aspect='auto')
-    ax_p.coastlines(linewidth=.3, color='black')
-    da.plot.imshow(ax=ax_p, transform=ctpy.crs.PlateCarree(),
-                   extend='max', vmax=20,
-                   cbar_kwargs=dict(orientation='horizontal', label='Precipitation rate (mm/hr)'))
-    # colorbar
-    # cbar = plt.colorbar(temp_plot, orientation='horizontal')
-    # cbar.set_label(label='Precipitation rate (mm/hr)')
-    plt.title("Mean hourly precipitation 2000-2012 (ERA5)")
-    plt.savefig('mean.png')
-    plt.close()
 
 
 def annual_maxs_of_roll_mean(ds, durations, temp_res):
@@ -104,7 +88,7 @@ def step1bis_reorg_ds():
     return da_full
 
 
-def annual_linregress(ds, x, y, prefix):
+def linregress(ds, x, y, prefix, dims):
     """ds: xarray dataset
     x, y: name of variables to use for the regression
     prefix: to be added before the indivudual result names
@@ -113,7 +97,7 @@ def annual_linregress(ds, x, y, prefix):
     array_names = ['{}_{}'.format(prefix, n) for n in lr_params]
     # return a tuple of DataArrays
     res = xr.apply_ufunc(scipy.stats.linregress, ds[x], ds[y],
-            input_core_dims=[['year'], ['year']],
+            input_core_dims=[dims, dims],
             output_core_dims=[[], [], [], [], []],
             vectorize=True,
             # dask='parallelized',
@@ -143,7 +127,7 @@ def step2_gumbel_fit(annual_maxs):
     ds['plot_pos'] = (ds['rank'] / (n_obs+1)).astype('float32')
     ds['gumbel_prov'] = double_log(ds['plot_pos'])
     # First fit
-    annual_linregress(ds, 'annual_max', 'gumbel_prov', 'prov_lr')
+    annual_linregress(ds, 'annual_max', 'gumbel_prov', 'prov_lr', ['year'])
     # get provisional gumbel parameters
     ds['loc_prov'] = -ds['prov_lr_intercept']/ds['prov_lr_slope']
     ds['scale_prov'] = -1/ds['prov_lr_slope']
@@ -152,14 +136,23 @@ def step2_gumbel_fit(annual_maxs):
     ds['gumbel_cdf'] = np.e**(-np.e**-z)
     # Get the final location and scale parameters
     ds['gumbel_final'] = double_log(ds['gumbel_cdf'])
-    annual_linregress(ds, 'annual_max', 'gumbel_final', 'final_lr')
+    annual_linregress(ds, 'annual_max', 'gumbel_final', 'final_lr', ['year'])
     ds['loc_final'] = -ds['final_lr_intercept']/ds['final_lr_slope']
     ds['scale_final'] = -1/ds['final_lr_slope']
+    return ds
 
-    # save to disk
-    out_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
-    chunked = ds.chunk(ANNUAL_CHUNKS)
-    chunked.to_netcdf(out_path, mode='w')
+
+def step3_duration_gradient(ds):
+    """Take a Dataset as input containing the fitted gumbel parameters
+    Fit a linear regression on the log of the parameters and the log of the duration
+    Keep the regression parameters as variables
+    """
+    ds['log_duration'] = xr.ufuncs.log10(ds['duration'])
+    ds['log_location'] = xr.ufuncs.log10(ds['loc_final'])
+    ds['log_scale'] = xr.ufuncs.log10(ds['scale_final'])
+    linregress(ds, 'log_duration', 'log_location', 'loc_lr', ['duration'])
+    linregress(ds, 'log_duration', 'log_scale', 'scale_lr', ['duration'])
+
 
 
 def benchmark(ds):
@@ -190,19 +183,37 @@ def benchmark(ds):
 def main():
     kampala_locator = {'latitude': round_partial(KAMPALA[0]),
                        'longitude': round_partial(KAMPALA[1]),
-                       'duration': 6}
+                       #'duration': 6
+                       }
     with ProgressBar():
         # hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
         # hourly = xr.open_zarr(hourly_path).chunk(HOURLY_CHUNKS)
         # kampala_hourly = hourly.loc[KAMPALA]
         # step1_write_annual_maxs()
-        annual_maxs = step1bis_reorg_ds()
-        da_kampala = annual_maxs.loc[kampala_locator]
-        an_max_extract = annual_maxs.loc[EXTRACT]
+        # annual_maxs = step1bis_reorg_ds()
+        # da_kampala = annual_maxs.loc[kampala_locator]
+        # an_max_extract = annual_maxs.loc[EXTRACT]
         # print(da_extract.load())
         # print(kampala_hourly)
-        step2_gumbel_fit(an_max_extract)
-        # benchmark(annual_maxs)
+
+        # ds_gumbel = step2_gumbel_fit(annual_maxs)
+        # save to disk
+        # out_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
+        # ds_gumbel.to_netcdf(out_path, mode='w')
+
+        ds_gumbel = xr.open_dataset(os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL))
+        ds_gumbel_extract = ds_gumbel.loc[EXTRACT]
+        step3_duration_gradient(ds_gumbel_extract)
+        print(ds_gumbel_extract)
+
+        # print(ds_gumbel)
+        # plt.plot(ds_gumbel.duration, ds_gumbel.loc_final)
+        # ds_gumbel.loc_final.plot()
+        # ax = plt.gca()
+        # ax.set_yscale('log')
+        # ax.set_xscale('log')
+        # plt.savefig('kampala_dur-loc.png')
+        # plt.close()
 
         # kamp_6 = ds.loc[kampala_locator]
         # plt.figure(figsize=(8, 5))
