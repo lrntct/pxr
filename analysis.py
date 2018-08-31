@@ -9,7 +9,7 @@ import xarray as xr
 import dask
 from dask.diagnostics import ProgressBar
 import zarr
-import scipy
+import scipy.stats
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
 HOURLY_FILE = 'era5_2000-2012_precip_big_chunks.zarr'
@@ -198,7 +198,7 @@ def main():
         hourly_extract = hourly.loc[EXTRACT]
         print(hourly)
         # Get annual maxima #
-        annual_maxs = step1_annual_maxs_of_roll_mean(hourly_extract, DURATIONS, TEMP_RES)
+        annual_maxs = step1_annual_maxs_of_roll_mean(hourly, DURATIONS, TEMP_RES)
         amax_path = os.path.join(DATA_DIR, ANNUAL_FILE)
         annual_maxs.to_dataset().to_zarr(amax_path, mode='w', encoding=ANNUAL_ENCODING)
         logger(['start gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
