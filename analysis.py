@@ -1,6 +1,7 @@
 # -*- coding: utf8 -*-
 import sys
 import os
+import copy
 from datetime import datetime, timedelta
 import csv
 
@@ -14,8 +15,9 @@ import scipy.stats
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
 HOURLY_FILE = 'era5_2000-2012_precip_big_chunks.zarr'
 ANNUAL_FILE = 'era5_2000-2012_precip_annual_max.zarr'
-ANNUAL_FILE_GUMBEL = 'era5_2000-2012_precip_gumbel.nc'
-ANNUAL_FILE_GRADIENT = 'era5_2000-2012_precip_gradient.nc'
+ANNUAL_FILE_RANK = 'era5_2000-2012_precip_ranked_test.zarr'
+ANNUAL_FILE_GUMBEL = 'era5_2000-2012_precip_gumbel_test.nc'
+ANNUAL_FILE_GRADIENT = 'era5_2000-2012_precip_gradient_test.nc'
 
 LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
 
@@ -23,10 +25,10 @@ LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
 KAMPALA = (0.317, 32.616)
 KISUMU = (0.1, 34.75)
 # Extract
-EXTRACT = dict(latitude=slice(1.0, -0.25),
-               longitude=slice(32.5, 35))
-# EXTRACT = dict(latitude=slice(45, -45),
-#                longitude=slice(0, 90))
+# EXTRACT = dict(latitude=slice(1.0, -0.25),
+#                longitude=slice(32.5, 35))
+EXTRACT = dict(latitude=slice(0, -5),
+               longitude=slice(0, 5))
 # Spatial resolution in degree - used for match coordinates
 SPATIAL_RES = 0.25
 
@@ -34,12 +36,14 @@ SPATIAL_RES = 0.25
 DURATIONS = [i+1 for i in range(24)] + [i for i in range(24+6,48+6,6)] + [i*24 for i in [5,10,15]]
 TEMP_RES = 1  # Temporal resolution in hours
 
+DTYPE = 'float32'
+
 HOURLY_CHUNKS = {'time': -1, 'latitude': 8, 'longitude': 8}
 ANNUAL_CHUNKS = {'year': -1, 'duration':1, 'latitude': 45*4, 'longitude': 45*4}  # 4 cells: 1 degree
-ANNUAL_ENCODING = {'annual_max': {'dtype': 'float32', 'compressor': zarr.Blosc(cname='lz4', clevel=9)},
-                   'duration': {'dtype': 'float32'},
-                   'latitude': {'dtype': 'float32'},
-                   'longitude': {'dtype': 'float32'}}
+ANNUAL_ENCODING = {'annual_max': {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clevel=9)},
+                   'duration': {'dtype': DTYPE},
+                   'latitude': {'dtype': DTYPE},
+                   'longitude': {'dtype': DTYPE}}
 
 
 def round_partial(value):
@@ -102,7 +106,7 @@ def linregress(ds, x, y, prefix, dims):
             output_core_dims=[[], [], [], [], []],
             vectorize=True,
             # dask='parallelized',
-            output_dtypes=['float32' for i in range(5)]
+            output_dtypes=[DTYPE for i in range(5)]
             )
     # add the data to the existing dataset
     for arr_name, arr in zip(array_names, res):
@@ -110,22 +114,29 @@ def linregress(ds, x, y, prefix, dims):
 
 
 def double_log(arr):
-    return (np.log(np.log(1/arr))).astype('float32')
+    return (np.log(np.log(1/arr))).astype(DTYPE)
 
 
-def step2_gumbel_fit(annual_maxs):
+def step21_ranking(annual_maxs):
+    """Rank the annual maxs in time, in descending order
+    return a Dataset
+    """
+    n_obs = annual_maxs.count(dim='year')
+    # rank is working in ascending order
+    ranks = n_obs - annual_maxs.load().rank(dim='year').rename('rank').astype(DTYPE)
+    return xr.merge([annual_maxs, ranks])
+
+
+def step22_gumbel_fit(ds):
     """Follow the steps described in:
     Loaiciga, H. A., & Leipnik, R. B. (1999).
     Analysis of extreme hydrologic events with Gumbel distributions: marginal and additive cases.
     Stochastic Environmental Research and Risk Assessment (SERRA), 13(4), 251–259.
     https://doi.org/10.1007/s004770050042
     """
-    # Rank the observations in time
-    ranks = annual_maxs.load().rank(dim='year').rename('rank').astype('int16')
-    ds = xr.merge([annual_maxs, ranks])  # .chunk(ANNUAL_CHUNKS)
-    # Estimate probability F{x} with plotting positions
     n_obs = ds.annual_max.count(dim='year')
-    ds['plot_pos'] = (ds['rank'] / (n_obs+1)).astype('float32')
+    # Estimate probability F{x} with plotting positions
+    ds['plot_pos'] = (ds['rank'] / (n_obs+1)).astype(DTYPE)
     ds['gumbel_prov'] = double_log(ds['plot_pos'])
     # First fit
     linregress(ds, 'annual_max', 'gumbel_prov', 'prov_lr', ['year'])
@@ -190,31 +201,46 @@ def main():
     logger(['operation', 'timestamp', 'cumul_sec'])
 
     with ProgressBar():
-        # Load hourly data #
         start_time = datetime.now()
-        logger(['start computing annual maxima', str(start_time), 0])
-        hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
-        hourly = xr.open_zarr(hourly_path).chunk(HOURLY_CHUNKS)
-        hourly_extract = hourly.loc[EXTRACT]
-        print(hourly)
+        # Load hourly data #
+        # logger(['start computing annual maxima', str(start_time), 0])
+        # hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
+        # hourly = xr.open_zarr(hourly_path).chunk(HOURLY_CHUNKS)
+        # hourly_extract = hourly.loc[EXTRACT]
+        # print(hourly)
+
         # Get annual maxima #
-        annual_maxs = step1_annual_maxs_of_roll_mean(hourly, DURATIONS, TEMP_RES)
+        # annual_maxs = step1_annual_maxs_of_roll_mean(hourly, DURATIONS, TEMP_RES).chunk(ANNUAL_CHUNKS)
         amax_path = os.path.join(DATA_DIR, ANNUAL_FILE)
-        annual_maxs.to_dataset().to_zarr(amax_path, mode='w', encoding=ANNUAL_ENCODING)
-        logger(['start gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # annual_maxs.to_dataset().to_zarr(amax_path, mode='w', encoding=ANNUAL_ENCODING)
+
+        annual_maxs = xr.open_zarr(amax_path)['annual_max'].chunk(ANNUAL_CHUNKS).loc[EXTRACT]
+
+        # Do the ranking
+        logger(['start ranking annual maxima', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        ds_ranked = step21_ranking(annual_maxs)
+        logger(['start writing ranks', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        rank_encoding = copy.deepcopy(ANNUAL_ENCODING)
+        rank_encoding['rank'] = {'dtype': 'uint16', 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
+        rank_path = os.path.join(DATA_DIR, ANNUAL_FILE_RANK)
+        ds_ranked.to_dataset().to_zarr(rank_path, mode='w', encoding=rank_encoding)
+        print(ds_ranked)
+
         # fit Gumbel #
-        ds_fitted = step2_gumbel_fit(annual_maxs)
-        logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
-        ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gumbel_path, mode='w')
+        # logger(['start gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # ds_fitted = step22_gumbel_fit(ds_ranked)
+        # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
+        # ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gumbel_path, mode='w')
+
         # fit duration scaling #
-        logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        step3_duration_gradient(ds_fitted)
-        logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
-        ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gradient_path, mode='w')
-        logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        print(ds_fitted)
+        # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # step3_duration_gradient(ds_fitted)
+        # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
+        # ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gradient_path, mode='w')
+        # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # print(ds_fitted)
 
 
 if __name__ == "__main__":
