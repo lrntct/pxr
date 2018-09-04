@@ -27,8 +27,8 @@ KISUMU = (0.1, 34.75)
 # Extract
 # EXTRACT = dict(latitude=slice(1.0, -0.25),
 #                longitude=slice(32.5, 35))
-EXTRACT = dict(latitude=slice(0, -5),
-               longitude=slice(0, 5))
+EXTRACT = dict(latitude=slice(0, -2),
+               longitude=slice(0, 2))
 # Spatial resolution in degree - used for match coordinates
 SPATIAL_RES = 0.25
 
@@ -65,32 +65,11 @@ def step1_annual_maxs_of_roll_mean(ds, durations, temp_res):
         da = annual_max.expand_dims('duration')
         da.coords['duration'] = [duration]
         annual_maxs.append(da)
-    return xr.concat(annual_maxs, 'duration')
+    return xr.concat(annual_maxs, 'duration').chunk(ANNUAL_CHUNKS)
 
 
-# def step1_write_annual_maxs():
-#     hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
-#     hourly = xr.open_zarr(hourly_path)#.chunk(HOURLY_CHUNKS)
-#     annual_maxs = annual_maxs_of_roll_mean(hourly, DURATIONS, TEMP_RES)
-#     out_path = os.path.join(DATA_DIR, ANNUAL_FILE)
-#     annual_maxs.to_dataset().to_zarr(out_path, mode='w', encoding=ANNUAL_ENCODING)
-
-
-# def step1bis_reorg_ds():
-#     """take a dataset as an imput
-#     Re-arrange the variables as member of a new dimension
-#     retrurn an xarray
-#     """
-#     annual_path = os.path.join(DATA_DIR, ANNUAL_FILE)
-#     annual_maxs = xr.open_zarr(annual_path)
-#     an_max_list = []
-#     for dur in DURATIONS:
-#         var_name = 'annual_max_{}h'.format(dur)
-#         da = annual_maxs[var_name].rename('annual_max').expand_dims('duration')
-#         da.coords['duration'] = [dur]
-#         an_max_list.append(da)
-#     da_full = xr.concat(an_max_list, 'duration')
-#     return da_full
+def linregress_ufunc(x, y, param):
+    return scipy.stats.linregress(x, y)._asdict()[param]
 
 
 def linregress(ds, x, y, prefix, dims):
@@ -100,16 +79,18 @@ def linregress(ds, x, y, prefix, dims):
     """
     lr_params = ['slope', 'intercept', 'rvalue', 'pvalue', 'stderr']
     array_names = ['{}_{}'.format(prefix, n) for n in lr_params]
-    # return a tuple of DataArrays
-    res = xr.apply_ufunc(scipy.stats.linregress, ds[x], ds[y],
-            input_core_dims=[dims, dims],
-            output_core_dims=[[], [], [], [], []],
-            vectorize=True,
-            # dask='parallelized',
-            output_dtypes=[DTYPE for i in range(5)]
-            )
+    arr_res = []
+    for param_name in lr_params:
+        arr_res.append(xr.apply_ufunc(linregress_ufunc,
+                                      ds[x], ds[y], kwargs={'param':param_name},
+                                      input_core_dims=[dims, dims],
+                                      output_core_dims=[[]],
+                                      vectorize=True,
+                                      dask='parallelized',
+                                      output_dtypes=[DTYPE]
+                                      ))
     # add the data to the existing dataset
-    for arr_name, arr in zip(array_names, res):
+    for arr_name, arr in zip(array_names, arr_res):
         ds[arr_name] = arr
 
 
@@ -123,7 +104,7 @@ def step21_ranking(annual_maxs):
     """
     n_obs = annual_maxs.count(dim='year')
     # rank is working in ascending order
-    ranks = n_obs - annual_maxs.load().rank(dim='year').rename('rank').astype(DTYPE)
+    ranks = (n_obs - annual_maxs.load().rank(dim='year')).rename('rank').astype(DTYPE)
     return xr.merge([annual_maxs, ranks])
 
 
@@ -210,28 +191,28 @@ def main():
         # print(hourly)
 
         # Get annual maxima #
-        # annual_maxs = step1_annual_maxs_of_roll_mean(hourly, DURATIONS, TEMP_RES).chunk(ANNUAL_CHUNKS)
+        # annual_maxs = step1_annual_maxs_of_roll_mean(hourly, DURATIONS, TEMP_RES)
         amax_path = os.path.join(DATA_DIR, ANNUAL_FILE)
         # annual_maxs.to_dataset().to_zarr(amax_path, mode='w', encoding=ANNUAL_ENCODING)
 
-        annual_maxs = xr.open_zarr(amax_path)['annual_max'].chunk(ANNUAL_CHUNKS).loc[EXTRACT]
+        annual_maxs = xr.open_zarr(amax_path)['annual_max'].loc[EXTRACT]
 
         # Do the ranking
         logger(['start ranking annual maxima', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         ds_ranked = step21_ranking(annual_maxs)
         logger(['start writing ranks', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         rank_encoding = copy.deepcopy(ANNUAL_ENCODING)
-        rank_encoding['rank'] = {'dtype': 'uint16', 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
+        rank_encoding['rank'] = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
         rank_path = os.path.join(DATA_DIR, ANNUAL_FILE_RANK)
-        ds_ranked.to_dataset().to_zarr(rank_path, mode='w', encoding=rank_encoding)
+        ds_ranked.to_zarr(rank_path, mode='w', encoding=rank_encoding)
         print(ds_ranked)
 
         # fit Gumbel #
-        # logger(['start gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # ds_fitted = step22_gumbel_fit(ds_ranked)
-        # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
-        # ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gumbel_path, mode='w')
+        logger(['start gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        ds_fitted = step22_gumbel_fit(ds_ranked)
+        logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
+        ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gumbel_path, mode='w')
 
         # fit duration scaling #
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
@@ -239,8 +220,8 @@ def main():
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
         # ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gradient_path, mode='w')
-        # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # print(ds_fitted)
+        logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        print(ds_fitted)
 
 
 if __name__ == "__main__":
