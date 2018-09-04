@@ -212,7 +212,7 @@ def main():
         ds_fitted = step22_gumbel_fit(ds_ranked)
         logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
-        ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gumbel_path, mode='w')
+        ds_fitted.to_netcdf(gumbel_path, mode='w')
 
         # fit duration scaling #
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
