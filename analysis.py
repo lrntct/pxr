@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import csv
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 import dask
 from dask.diagnostics import ProgressBar
@@ -17,15 +18,20 @@ import dask_ml.linear_model
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
 HOURLY_FILE = 'era5_2000-2012_precip_big_chunks.zarr'
 ANNUAL_FILE = 'era5_2000-2012_precip_annual_max.zarr'
-ANNUAL_FILE_RANK = 'era5_2000-2012_precip_ranked_test.zarr'
+ANNUAL_FILE_RANK = 'era5_2000-2012_precip_ranked.zarr'
 ANNUAL_FILE_GUMBEL = 'era5_2000-2012_precip_gumbel_extract.nc'
 ANNUAL_FILE_GRADIENT = 'era5_2000-2012_precip_gradient_extract.nc'
 
 LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
 
+
+# Annual max from Rob
+KAMPALA_AMS = '/home/lunet/gylc4/Sync/papers/global rainfall freq analysis/data/rob_kampala.csv'
+KISUMU_AMS = '/home/lunet/gylc4/Sync/papers/global rainfall freq analysis/data/rob_kisumu.csv'
+
 # Coordinates of study sites
-KAMPALA = (0.317, 32.616)
-KISUMU = (0.1, 34.75)
+KAMPALA_COORD = (0.317, 32.616)
+KISUMU_COORD = (0.1, 34.75)
 # Extract
 # EXTRACT = dict(latitude=slice(1.0, -0.25),
 #                longitude=slice(32.5, 35))
@@ -90,7 +96,6 @@ def linregress(ds, x, y, prefix, dims):
             )
     # add the data to the existing dataset
     for arr_name, arr in zip(array_names, res):
-        print(arr)
         ds[arr_name] = arr
 
 
@@ -106,8 +111,9 @@ def step21_ranking(annual_maxs):
     # by default, rank works in ascending order
     desc_rank = annual_maxs.load().rank(dim='year')
     # we want the rank in descending order, and make sure that the resulting array is in the same order as the original
-    ranks = (n_obs - desc_rank).rename('rank').astype(DTYPE).transpose(*annual_maxs.dims)
-    return xr.merge([annual_maxs, ranks])
+    ranks = (n_obs - desc_rank + 1).rename('rank').astype(DTYPE).transpose(*annual_maxs.dims)
+    # Merge array and make sure chunks are congruents
+    return xr.merge([annual_maxs, ranks]).chunk(ANNUAL_CHUNKS)
 
 
 def step22_gumbel_fit(ds):
@@ -142,9 +148,9 @@ def step3_duration_gradient(ds):
     Fit a linear regression on the log of the parameters and the log of the duration
     Keep the regression parameters as variables
     """
-    ds['log_duration'] = xr.ufuncs.log10(ds['duration'])
-    ds['log_location'] = xr.ufuncs.log10(ds['loc_final'])
-    ds['log_scale'] = xr.ufuncs.log10(ds['scale_final'])
+    ds['log_duration'] = np.log10(ds['duration'])
+    ds['log_location'] = np.log10(ds['loc_final'])
+    ds['log_scale'] = np.log10(ds['scale_final'])
     linregress(ds, 'log_duration', 'log_location', 'loc_lr', ['duration'])
     linregress(ds, 'log_duration', 'log_scale', 'scale_lr', ['duration'])
 
@@ -168,6 +174,29 @@ def benchmark(ds):
     print({k:v for k, v in zip(sizes_sq, dur_sec)})
 
 
+def amax_rob():
+    """read a list of CSV.
+    return a dataArray of annual maxima
+    """
+    arr_list = []
+    for fpath, sname in [(KISUMU_AMS, 'kisumu'), (KAMPALA_AMS, 'kampala')]:
+        df = pd.read_csv(fpath, index_col='year')
+        # print(df)
+        ds = df.to_xarray()
+        annual_maxs = []
+        for var_name in ds.data_vars:
+            annual_max = ds[var_name]
+            annual_max.name = 'annual_max'
+            da = annual_max.expand_dims('duration')
+            da.coords['duration'] = [int(var_name)*24]
+            annual_maxs.append(da)
+        da_site = xr.concat(annual_maxs, 'duration')
+        da_site = da_site.expand_dims('site')
+        da_site.coords['site'] = [sname]
+        arr_list.append(da_site)
+    return xr.concat(arr_list, 'site')
+
+
 def logger(fields):
     log_file_path = os.path.join(DATA_DIR, LOG_FILENAME)
     with open(log_file_path, mode='a') as log_file:
@@ -176,14 +205,17 @@ def logger(fields):
 
 
 def main():
-    kampala_locator = {'latitude': round_partial(KAMPALA[0]),
-                       'longitude': round_partial(KAMPALA[1]),
+    kampala_locator = {'latitude': round_partial(KAMPALA_COORD[0]),
+                       'longitude': round_partial(KAMPALA_COORD[1]),
                        #'duration': 6
                        }
     # Log file
-    logger(['operation', 'timestamp', 'cumul_sec'])
+    # logger(['operation', 'timestamp', 'cumul_sec'])
 
     with ProgressBar():
+
+        # print(annual_maxs)
+
         start_time = datetime.now()
         # Load hourly data #
         # logger(['start computing annual maxima', str(start_time), 0])
@@ -194,26 +226,27 @@ def main():
 
         # Get annual maxima #
         # annual_maxs = step1_annual_maxs_of_roll_mean(hourly, DURATIONS, TEMP_RES).chunk(ANNUAL_CHUNKS)
-        amax_path = os.path.join(DATA_DIR, ANNUAL_FILE)
+        # amax_path = os.path.join(DATA_DIR, ANNUAL_FILE)
         # annual_maxs.to_dataset().to_zarr(amax_path, mode='w', encoding=ANNUAL_ENCODING)
 
         # logger(['start ranking annual maxima', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        annual_maxs = xr.open_zarr(amax_path)['annual_max'].loc[EXTRACT]
+        # annual_maxs = xr.open_zarr(amax_path)['annual_max']
 
         # Do the ranking
         ds_ranked = step21_ranking(annual_maxs)
-        print(ds_ranked)
+        # print(ds_ranked)
         # logger(['start writing ranks', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # rank_encoding = copy.deepcopy(ANNUAL_ENCODING)
         # rank_encoding['rank'] = {'dtype': 'float32', 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
-        rank_path = os.path.join(DATA_DIR, ANNUAL_FILE_RANK)
+        # rank_path = os.path.join(DATA_DIR, ANNUAL_FILE_RANK)
         # ds_ranked.to_zarr(rank_path, mode='w', encoding=rank_encoding)
+
 
         # fit Gumbel #
         # logger(['start gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # ds_ranked = xr.open_zarr(rank_path).loc[EXTRACT]
+        # ds_ranked = xr.open_zarr(rank_path)
+        ds_fitted = step22_gumbel_fit(ds_ranked)
 
-        # ds_fitted = step22_gumbel_fit(ds_ranked)
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
         # ds_fitted.to_netcdf(gumbel_path, mode='w')
