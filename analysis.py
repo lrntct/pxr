@@ -11,13 +11,15 @@ import dask
 from dask.diagnostics import ProgressBar
 import zarr
 import scipy.stats
+import dask_ml.linear_model
+
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
 HOURLY_FILE = 'era5_2000-2012_precip_big_chunks.zarr'
-ANNUAL_FILE = 'era5_2000-2012_precip_annual_max_rechunked.zarr'
-ANNUAL_FILE_RANK = 'era5_2000-2012_precip_ranked.zarr'
-ANNUAL_FILE_GUMBEL = 'era5_2000-2012_precip_gumbel_test.nc'
-ANNUAL_FILE_GRADIENT = 'era5_2000-2012_precip_gradient_test.nc'
+ANNUAL_FILE = 'era5_2000-2012_precip_annual_max.zarr'
+ANNUAL_FILE_RANK = 'era5_2000-2012_precip_ranked_test.zarr'
+ANNUAL_FILE_GUMBEL = 'era5_2000-2012_precip_gumbel_extract.nc'
+ANNUAL_FILE_GRADIENT = 'era5_2000-2012_precip_gradient_extract.nc'
 
 LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
 
@@ -72,20 +74,23 @@ def linregress(ds, x, y, prefix, dims):
     """ds: xarray dataset
     x, y: name of variables to use for the regression
     prefix: to be added before the indivudual result names
+    dims: dimension on which to carry out the regression
     """
     lr_params = ['slope', 'intercept', 'rvalue', 'pvalue', 'stderr']
     array_names = ['{}_{}'.format(prefix, n) for n in lr_params]
+
     ds.load()
     # return a tuple of DataArrays
     res = xr.apply_ufunc(scipy.stats.linregress, ds[x], ds[y],
             input_core_dims=[dims, dims],
-            output_core_dims=[[], [], [], [], []],
+            output_core_dims=[[] for i in lr_params],
             vectorize=True,
-            # dask='parallelized',
-            output_dtypes=[DTYPE for i in range(5)]
+            # dask='allowed',
+            output_dtypes=[DTYPE for i in lr_params]
             )
     # add the data to the existing dataset
     for arr_name, arr in zip(array_names, res):
+        print(arr)
         ds[arr_name] = arr
 
 
@@ -98,8 +103,10 @@ def step21_ranking(annual_maxs):
     return a Dataset
     """
     n_obs = annual_maxs.count(dim='year')
-    # rank is working in ascending order
-    ranks = (n_obs - annual_maxs.load().rank(dim='year')).rename('rank').astype(DTYPE)
+    # by default, rank works in ascending order
+    desc_rank = annual_maxs.load().rank(dim='year')
+    # we want the rank in descending order, and make sure that the resulting array is in the same order as the original
+    ranks = (n_obs - desc_rank).rename('rank').astype(DTYPE).transpose(*annual_maxs.dims)
     return xr.merge([annual_maxs, ranks])
 
 
@@ -190,25 +197,26 @@ def main():
         amax_path = os.path.join(DATA_DIR, ANNUAL_FILE)
         # annual_maxs.to_dataset().to_zarr(amax_path, mode='w', encoding=ANNUAL_ENCODING)
 
-        annual_maxs = xr.open_zarr(amax_path)['annual_max']
-        print(annual_maxs)
+        # logger(['start ranking annual maxima', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        annual_maxs = xr.open_zarr(amax_path)['annual_max'].loc[EXTRACT]
 
         # Do the ranking
-        logger(['start ranking annual maxima', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         ds_ranked = step21_ranking(annual_maxs)
-        logger(['start writing ranks', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        rank_encoding = copy.deepcopy(ANNUAL_ENCODING)
-        rank_encoding['rank'] = {'dtype': 'float32', 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
-        rank_path = os.path.join(DATA_DIR, ANNUAL_FILE_RANK)
-        ds_ranked.to_zarr(rank_path, mode='w', encoding=rank_encoding)
         print(ds_ranked)
+        # logger(['start writing ranks', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # rank_encoding = copy.deepcopy(ANNUAL_ENCODING)
+        # rank_encoding['rank'] = {'dtype': 'float32', 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
+        rank_path = os.path.join(DATA_DIR, ANNUAL_FILE_RANK)
+        # ds_ranked.to_zarr(rank_path, mode='w', encoding=rank_encoding)
 
         # fit Gumbel #
         # logger(['start gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # ds_ranked = xr.open_zarr(rank_path).loc[EXTRACT]
+
         # ds_fitted = step22_gumbel_fit(ds_ranked)
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
-        # ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gumbel_path, mode='w')
+        # ds_fitted.to_netcdf(gumbel_path, mode='w')
 
         # fit duration scaling #
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
@@ -216,7 +224,7 @@ def main():
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
         # ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gradient_path, mode='w')
-        logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # print(ds_fitted)
 
 
