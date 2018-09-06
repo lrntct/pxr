@@ -19,8 +19,8 @@ DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
 HOURLY_FILE = 'era5_2000-2012_precip_big_chunks.zarr'
 ANNUAL_FILE = 'era5_2000-2012_precip_annual_max.zarr'
 ANNUAL_FILE_RANK = 'era5_2000-2012_precip_ranked.zarr'
-ANNUAL_FILE_GUMBEL = 'era5_2000-2012_precip_gumbel_extract.nc'
-ANNUAL_FILE_GRADIENT = 'era5_2000-2012_precip_gradient_extract.nc'
+ANNUAL_FILE_GUMBEL = 'era5_2000-2012_precip_gumbel.nc'
+ANNUAL_FILE_GRADIENT = 'era5_2000-2012_precip_gradient.nc'
 
 LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
 
@@ -148,9 +148,12 @@ def step3_duration_gradient(ds):
     Fit a linear regression on the log of the parameters and the log of the duration
     Keep the regression parameters as variables
     """
-    ds['log_duration'] = np.log10(ds['duration'])
-    ds['log_location'] = np.log10(ds['loc_final'])
-    ds['log_scale'] = np.log10(ds['scale_final'])
+    # compute the log
+    var_list = ['duration', 'loc_final', 'scale_final']
+    logvar_list = ['log_duration', 'log_location', 'log_scale']
+    for var, log_var in zip(var_list, logvar_list):
+        ds[log_var] = np.log10(np.abs(ds[var]))
+    # Do the linear regression
     linregress(ds, 'log_duration', 'log_location', 'loc_lr', ['duration'])
     linregress(ds, 'log_duration', 'log_scale', 'scale_lr', ['duration'])
 
@@ -210,12 +213,9 @@ def main():
                        #'duration': 6
                        }
     # Log file
-    # logger(['operation', 'timestamp', 'cumul_sec'])
+    logger(['operation', 'timestamp', 'cumul_sec'])
 
     with ProgressBar():
-
-        # print(annual_maxs)
-
         start_time = datetime.now()
         # Load hourly data #
         # logger(['start computing annual maxima', str(start_time), 0])
@@ -233,32 +233,32 @@ def main():
         # annual_maxs = xr.open_zarr(amax_path)['annual_max']
 
         # Do the ranking
-        ds_ranked = step21_ranking(annual_maxs)
+        # ds_ranked = step21_ranking(annual_maxs)
         # print(ds_ranked)
         # logger(['start writing ranks', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # rank_encoding = copy.deepcopy(ANNUAL_ENCODING)
         # rank_encoding['rank'] = {'dtype': 'float32', 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
-        # rank_path = os.path.join(DATA_DIR, ANNUAL_FILE_RANK)
+        rank_path = os.path.join(DATA_DIR, ANNUAL_FILE_RANK)
         # ds_ranked.to_zarr(rank_path, mode='w', encoding=rank_encoding)
 
 
         # fit Gumbel #
         # logger(['start gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # ds_ranked = xr.open_zarr(rank_path)
-        ds_fitted = step22_gumbel_fit(ds_ranked)
-
+        # ds_fitted = step22_gumbel_fit(ds_ranked)
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
+        gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
         # ds_fitted.to_netcdf(gumbel_path, mode='w')
+        ds_fitted = xr.open_dataset(gumbel_path)
 
         # fit duration scaling #
-        # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # step3_duration_gradient(ds_fitted)
-        # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
-        # ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gradient_path, mode='w')
-        # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # print(ds_fitted)
+        logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        step3_duration_gradient(ds_fitted)
+        logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
+        ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gradient_path, mode='w')
+        logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        print(ds_fitted)
 
 
 if __name__ == "__main__":
