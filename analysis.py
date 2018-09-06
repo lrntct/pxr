@@ -61,7 +61,7 @@ def round_partial(value):
 def step1_annual_maxs_of_roll_mean(ds, durations, temp_res):
     """for each rolling winfows size:
     compute the annual maximum of a moving mean
-    return a dataset with the durations as variables
+    return an array with the durations as a new dimension
     """
     annual_maxs = []
     for duration in durations:
@@ -104,16 +104,17 @@ def double_log(arr):
 
 
 def step21_ranking(annual_maxs):
-    """Rank the annual maxs in time, in descending order
+    """Rank the annual maxs in time, in ascending order
+    NOTE: Loaiciga & Leipnik (1999) call for the ranking to be done in desc. order,
+    but this results in negative scale parameter, and wrong fitting
+
     return a Dataset
     """
-    n_obs = annual_maxs.count(dim='year')
-    # by default, rank works in ascending order
-    desc_rank = annual_maxs.load().rank(dim='year')
-    # we want the rank in descending order, and make sure that the resulting array is in the same order as the original
-    ranks = (n_obs - desc_rank + 1).rename('rank').astype(DTYPE).transpose(*annual_maxs.dims)
-    # Merge array and make sure chunks are congruents
-    return xr.merge([annual_maxs, ranks]).chunk(ANNUAL_CHUNKS)
+    asc_rank = annual_maxs.load().rank(dim='year')
+    # make sure that the resulting array is in the same order as the original
+    ranks = asc_rank.rename('rank').astype(DTYPE).transpose(*annual_maxs.dims)
+    # Merge arrays
+    return xr.merge([annual_maxs, ranks])
 
 
 def step22_gumbel_fit(ds):
@@ -124,9 +125,9 @@ def step22_gumbel_fit(ds):
     https://doi.org/10.1007/s004770050042
     """
     n_obs = ds.annual_max.count(dim='year')
-    # Estimate probability F{x} with plotting positions
-    ds['plot_pos'] = (ds['rank'] / (n_obs+1)).astype(DTYPE)
-    ds['gumbel_prov'] = double_log(ds['plot_pos'])
+    # Estimate probability F{x} with the CDF estimator
+    ds['estimate_cdf'] = (ds['rank'] / (n_obs+1)).astype(DTYPE)
+    ds['gumbel_prov'] = double_log(ds['estimate_cdf'])
     # First fit
     linregress(ds, 'annual_max', 'gumbel_prov', 'prov_lr', ['year'])
     # get provisional gumbel parameters
@@ -152,7 +153,7 @@ def step3_duration_gradient(ds):
     var_list = ['duration', 'loc_final', 'scale_final']
     logvar_list = ['log_duration', 'log_location', 'log_scale']
     for var, log_var in zip(var_list, logvar_list):
-        ds[log_var] = np.log10(np.abs(ds[var]))
+        ds[log_var] = np.log10(ds[var])
     # Do the linear regression
     linregress(ds, 'log_duration', 'log_location', 'loc_lr', ['duration'])
     linregress(ds, 'log_duration', 'log_scale', 'scale_lr', ['duration'])
@@ -231,34 +232,37 @@ def main():
 
         # logger(['start ranking annual maxima', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # annual_maxs = xr.open_zarr(amax_path)['annual_max']
+        # annual_maxs = amax_rob()  # to compare with Rob's values
 
         # Do the ranking
-        # ds_ranked = step21_ranking(annual_maxs)
+        # ds_ranked = step21_ranking(annual_maxs)#.chunk(ANNUAL_CHUNKS)
         # print(ds_ranked)
         # logger(['start writing ranks', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # rank_encoding = copy.deepcopy(ANNUAL_ENCODING)
-        # rank_encoding['rank'] = {'dtype': 'float32', 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
+        encoding = copy.deepcopy(ANNUAL_ENCODING)
+        encoding['rank'] = {'dtype': 'float32', 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
         rank_path = os.path.join(DATA_DIR, ANNUAL_FILE_RANK)
-        # ds_ranked.to_zarr(rank_path, mode='w', encoding=rank_encoding)
+        # ds_ranked.to_zarr(rank_path, mode='w', encoding=encoding)
 
 
         # fit Gumbel #
-        # logger(['start gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # ds_ranked = xr.open_zarr(rank_path)
-        # ds_fitted = step22_gumbel_fit(ds_ranked)
+        logger(['start gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        ds_ranked = xr.open_zarr(rank_path)
+        ds_fitted = step22_gumbel_fit(ds_ranked)
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
+        # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
         # ds_fitted.to_netcdf(gumbel_path, mode='w')
-        ds_fitted = xr.open_dataset(gumbel_path)
+        # ds_fitted = xr.open_dataset(gumbel_path)
 
         # fit duration scaling #
-        logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        step3_duration_gradient(ds_fitted)
-        logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
-        ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gradient_path, mode='w')
-        logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        print(ds_fitted)
+        # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # step3_duration_gradient(ds_fitted)
+        # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
+        # ds_fitted.chunk(ANNUAL_CHUNKS).to_netcdf(gradient_path, mode='w')
+        # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+
+        # display params to compare with Rob's
+        # print(ds_fitted[['loc_final', 'scale_final']].loc[{'site':'kampala'}].to_dataframe().transpose())
 
 
 if __name__ == "__main__":
