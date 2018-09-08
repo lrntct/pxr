@@ -12,17 +12,15 @@ import dask
 from dask.diagnostics import ProgressBar
 import zarr
 import scipy.stats
-import dask_ml.linear_model
-import statsmodels as sm
-import statsmodels.regression.linear_model as slm
 
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
-HOURLY_FILE = 'era5_2000-2012_precip_big_chunks.zarr'
+HOURLY_FILE = 'era5_2000-2012_precip.zarr'
 ANNUAL_FILE = 'era5_2000-2012_precip_annual_max.zarr'
 ANNUAL_FILE_RANK = 'era5_2000-2012_precip_ranked.zarr'
-ANNUAL_FILE_GUMBEL = 'era5_2000-2012_precip_gumbel_ascorder.nc'
+ANNUAL_FILE_GUMBEL = 'era5_2000-2012_precip_gumbel.zarr'
 ANNUAL_FILE_GRADIENT = 'era5_2000-2012_precip_gradient.zarr'
+ANNUAL_FILE_PEARSONR = 'era5_2000-2012_precip_pearsonr.zarr'
 
 LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
 
@@ -37,10 +35,8 @@ KISUMU_COORD = (0.1, 34.75)
 # Extract
 # EXTRACT = dict(latitude=slice(1.0, -0.25),
 #                longitude=slice(32.5, 35))
-EXTRACT = dict(latitude=slice(0, -4),
-               longitude=slice(0, 4))
-# Spatial resolution in degree - used for match coordinates
-SPATIAL_RES = 0.25
+EXTRACT = dict(latitude=slice(0, -5),
+               longitude=slice(0, 5))
 
 # Event durations in hours - has to be adjusted to temporal resolution for the moving window
 DURATIONS = [i+1 for i in range(24)] + [i for i in range(24+6,48+6,6)] + [i*24 for i in [5,10,15]]
@@ -55,10 +51,6 @@ ANNUAL_ENCODING = {'annual_max': GEN_FLOAT_ENCODING,
                    'duration': {'dtype': DTYPE},
                    'latitude': {'dtype': DTYPE},
                    'longitude': {'dtype': DTYPE}}
-
-
-def round_partial(value):
-    return round(value / SPATIAL_RES) * SPATIAL_RES
 
 
 def step1_annual_maxs_of_roll_mean(ds, durations, temp_res):
@@ -173,6 +165,27 @@ def step3_duration_gradient(ds):
     linregress(ds, 'log_duration', 'log_scale', 'scale_lr', ['duration'])
 
 
+def pearsonr(x, y):
+    """wrapper for the pearson r computation from scipy
+    return only the r value
+    """
+    return scipy.stats.pearsonr(x, y)[0]
+
+
+def step4_pearsonr(ds):
+    """Compare the scaling gradients using the pearson r
+    """
+    x = ds['duration']**ds['loc_lr_slope']
+    y = ds['duration']**ds['scale_lr_slope']
+    res = xr.apply_ufunc(pearsonr, x, y,
+            input_core_dims=[['duration'], ['duration']],
+            # output_core_dims=[[]],
+            vectorize=True,
+            dask='parallelized',
+            output_dtypes=[DTYPE]
+            )
+    ds['scaling_pearsonr'] = res
+
 def set_attrs(ds):
     """Set atrributes of a dataset
     """
@@ -232,10 +245,6 @@ def logger(fields):
 
 
 def main():
-    kampala_locator = {'latitude': round_partial(KAMPALA_COORD[0]),
-                       'longitude': round_partial(KAMPALA_COORD[1]),
-                       #'duration': 6
-                       }
     # Log file
     # logger(['operation', 'timestamp', 'cumul_sec'])
 
@@ -245,6 +254,10 @@ def main():
         # logger(['start computing annual maxima', str(start_time), 0])
         # hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
         # hourly = xr.open_zarr(hourly_path).chunk(HOURLY_CHUNKS)
+        # hourly_kamp = hourly.sel(latitude=KAMPALA_COORD[0],
+        #                          longitude=KAMPALA_COORD[1],
+        #                          method='nearest')
+        # print(hourly_kamp.max().compute())
         # hourly_extract = hourly.loc[EXTRACT]
         # print(hourly)
 
@@ -263,32 +276,38 @@ def main():
         # logger(['start writing ranks', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # encoding = copy.deepcopy(ANNUAL_ENCODING)
         # encoding['rank'] = GEN_FLOAT_ENCODING
-        rank_path = os.path.join(DATA_DIR, ANNUAL_FILE_RANK)
+        # rank_path = os.path.join(DATA_DIR, ANNUAL_FILE_RANK)
         # ds_ranked.to_zarr(rank_path, mode='w', encoding=encoding)
 
 
         # fit Gumbel #
         # logger(['start gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # ds_ranked = set_attrs(xr.open_zarr(rank_path)).loc[EXTRACT]
+        # ds_ranked = set_attrs(xr.open_zarr(rank_path))
         # ds_fitted = step22_gumbel_fit(ds_ranked)
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
+        # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         # ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(gumbel_path, mode='w', encoding=encoding)
-        ds_fitted = set_attrs(xr.open_dataset(gumbel_path))
-        print(ds_fitted)
+        # ds_fitted = set_attrs(xr.open_dataset(gumbel_path)).loc[EXTRACT]
+        # print(ds_fitted)
 
         # fit duration scaling #
-        # np.seterr(all='raise')
-
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # step3_duration_gradient(ds_fitted).log[EXTRACT]
+        # step3_duration_gradient(ds_fitted)
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
-        encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
+        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         # ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(gradient_path, mode='w', encoding=encoding)
         # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # print(np.isfinite(ds_fitted))
         # print(ds_fitted.isnull().sum().compute())
+
+        ds_fitted = xr.open_zarr(gradient_path)
+        step4_pearsonr(ds_fitted)
+        pearson_path = os.path.join(DATA_DIR, ANNUAL_FILE_PEARSONR)
+        encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
+        ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(pearson_path, mode='w', encoding=encoding)
+        print(ds_fitted)
 
         # display params to compare with Rob's
         # print(ds_fitted[['loc_final', 'scale_final']].loc[{'site':'kampala'}].to_dataframe().transpose())
