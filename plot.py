@@ -75,12 +75,12 @@ def plot_sites(ds, sites, fig_name):
     scaling_coeffs_series = []
     for site_name, site_coord in sites.items():
         ds_sel = ds.sel(latitude=site_coord[0], longitude=site_coord[1], method='nearest').drop(['latitude', 'longitude'])
-        scaling_coeffs = ['loc_lr_intercept', 'loc_lr_slope', 'scale_lr_intercept', 'scale_lr_slope']
+        scaling_coeffs = ['loc_lr_intercept', 'loc_lr_slope', 'scale_lr_intercept', 'scale_lr_slope', 'scaling_pearsonr']
         scaling_coeffs_series.append(ds_sel[scaling_coeffs].to_array(name=site_name).to_series())
         dict_df[site_name] = ds_sel[['loc_final', 'scale_final']].to_dataframe()
     df_scaling_coeffs = pd.DataFrame(scaling_coeffs_series).T
     # print(df_scaling_coeffs)
-    print(dict_df['Kisumu'])
+    # print(dict_df['Kisumu'])
 
     fig, axes = plt.subplots(1, 2, sharey=True, figsize=(8,4))
     for (site_name, df), ax in zip(dict_df.items(), axes):
@@ -110,8 +110,10 @@ def plot_sites(ds, sites, fig_name):
         ax.set_xticks([1, 3, 6, 12, 24, 48, 120, 360])
         ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
 
-        txt = "$\eta(\mu)$ = {:.2f}\n$\eta(\sigma)$ = {:.2f}".format(eta['loc'], eta['scale'])
-        ax.text(0.05, 0.1, txt, horizontalalignment='left', backgroundcolor='white',
+        txt = "$\eta(\mu)$ = {:.2f}\n$\eta(\sigma)$ = {:.2f}\nPearson's r = {:.2f}".format(
+                eta['loc'], eta['scale'],
+                df_scaling_coeffs.loc['scaling_pearsonr', site_name])
+        ax.text(0.05, 0.15, txt, horizontalalignment='left', backgroundcolor='white',
                 verticalalignment='center', transform=ax.transAxes, size=10)
     # plt.legend(lines, labels, loc='lower center', ncol=4)
     lgd = fig.legend(lines, labels, loc='lower center', ncol=4)
@@ -151,12 +153,12 @@ def main():
     #            ['First Gumbel estimate', 'Final Gumbel fitting', 'Location-Duration', 'Scale-Duration'],
     #            '$r^2$', 'gumbel_r2.png', sqr=True)
 
-    # plot_sites(ds, STUDY_SITES, 'sites_scaling.png')
+    plot_sites(ds, STUDY_SITES, 'sites_scaling.png')
 
-    single_map(ds['scaling_pearsonr'],
-               title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
-               cbar_label='Pearson correlation coefficient',
-               fig_name='pearsonr.pdf')
+    # single_map(ds['scaling_pearsonr'],
+    #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
+    #            cbar_label='Pearson correlation coefficient',
+    #            fig_name='pearsonr.pdf')
 
     # hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
     # hourly = xr.open_zarr(hourly_path)
