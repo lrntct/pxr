@@ -45,7 +45,7 @@ TEMP_RES = 1  # Temporal resolution in hours
 DTYPE = 'float32'
 
 HOURLY_CHUNKS = {'time': -1, 'latitude': 8, 'longitude': 8}
-ANNUAL_CHUNKS = {'year': -1, 'duration':1, 'latitude': 45*4, 'longitude': 45*4}  # 4 cells: 1 degree
+ANNUAL_CHUNKS = {'year': -1, 'duration':10, 'latitude': 45*4, 'longitude': 45*4}  # 4 cells: 1 degree
 GEN_FLOAT_ENCODING = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
 ANNUAL_ENCODING = {'annual_max': GEN_FLOAT_ENCODING,
                    'duration': {'dtype': DTYPE},
@@ -123,7 +123,7 @@ def step21_ranking(annual_maxs):
     return xr.merge([annual_maxs, ranks])
 
 
-def step22_gumbel_fit(ds):
+def step22_gumbel_fit_loaiciga1999(ds):
     """Follow the steps described in:
     Loaiciga, H. A., & Leipnik, R. B. (1999).
     Analysis of extreme hydrologic events with Gumbel distributions: marginal and additive cases.
@@ -131,7 +131,7 @@ def step22_gumbel_fit(ds):
     https://doi.org/10.1007/s004770050042
     """
     n_obs = ds.annual_max.count(dim='year')
-    # Estimate probability F{x} with the CDF estimator
+    # Estimate probability F{x} with the Weibull formula
     ds['estimate_cdf'] = (ds['rank'] / (n_obs+1)).astype(DTYPE)
     ds['gumbel_prov'] = double_log(ds['estimate_cdf'])
     # First fit
@@ -148,6 +148,24 @@ def step22_gumbel_fit(ds):
     ds['loc_final'] = -ds['final_lr_intercept']/ds['final_lr_slope']
     ds['scale_final'] = -1/ds['final_lr_slope']
     return ds
+
+
+def step2bis_gumbel_fit_naive(ds):
+    """
+    """
+    magic_number1 = 0.45
+    magic_number2 = 0.7797
+    mean = ds['annual_max'].mean(dim='year')
+    std = ds['annual_max'].std(dim='year')
+    ds['loc_naive'] = mean - (magic_number1 * std)
+    ds['scale_naive'] = magic_number2 * std
+
+
+def step25_KS_test(ds):
+    """
+    """
+    print(scipy.stats.kstest(ds_sel['annual_max'].values, 'gumbel_r', (ds_sel['loc_final'], ds_sel['scale_final'])))
+    print(scipy.stats.kstest(ds_sel['annual_max'].values, 'gumbel_r', (loc_naive, scale_naive)))
 
 
 def step3_duration_gradient(ds):
@@ -283,7 +301,7 @@ def main():
         # fit Gumbel #
         # logger(['start gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # ds_ranked = set_attrs(xr.open_zarr(rank_path))
-        # ds_fitted = step22_gumbel_fit(ds_ranked)
+        # ds_fitted = step22_gumbel_fit_loaiciga1999(ds_ranked)
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
@@ -295,7 +313,7 @@ def main():
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # step3_duration_gradient(ds_fitted)
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
+        # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         # ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(gradient_path, mode='w', encoding=encoding)
         # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
