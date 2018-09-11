@@ -20,7 +20,7 @@ ANNUAL_FILE = 'era5_2000-2012_precip_annual_max.zarr'
 ANNUAL_FILE_RANK = 'era5_2000-2012_precip_ranked.zarr'
 ANNUAL_FILE_GUMBEL = 'era5_2000-2012_precip_gumbel.zarr'
 ANNUAL_FILE_GRADIENT = 'era5_2000-2012_precip_gradient.zarr'
-ANNUAL_FILE_PEARSONR = 'era5_2000-2012_precip_pearsonr.zarr'
+ANNUAL_FILE_SCALING = 'era5_2000-2012_precip_scaling.zarr'
 
 LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
 
@@ -195,19 +195,39 @@ def pearsonr(x, y):
     return scipy.stats.pearsonr(x, y)[0]
 
 
-def step4_pearsonr(ds):
-    """Compare the scaling gradients using the pearson r
+def spearmanr(x, y):
+    """wrapper for the Spearman's r computation from scipy
+    return only the r value
     """
-    x = ds['duration']**ds['loc_lr_slope']
-    y = ds['duration']**ds['scale_lr_slope']
-    res = xr.apply_ufunc(pearsonr, x, y,
-            input_core_dims=[['duration'], ['duration']],
-            # output_core_dims=[[]],
-            vectorize=True,
-            dask='parallelized',
-            output_dtypes=[DTYPE]
-            )
-    ds['scaling_pearsonr'] = res
+    return scipy.stats.spearmanr(x, y, nanpolicy='omit')[0]
+
+
+def step4_scaling_correlation(ds):
+    """Compare the scaling gradients using:
+    Pearson's r
+    Spearman's r
+    ratio
+    """
+    # x = ds['duration']**ds['loc_lr_slope']
+    # y = ds['duration']**ds['scale_lr_slope']
+    ds['scaling_pearsonr'] = xr.apply_ufunc(pearsonr,
+                                    ds['loc_loaiciga'], ds['scale_loaiciga'],
+                                    input_core_dims=[['duration'], ['duration']],
+                                    # output_core_dims=[[]],
+                                    vectorize=True,
+                                    dask='parallelized',
+                                    output_dtypes=[DTYPE]
+                                    )
+    ds['scaling_spearmanr'] = xr.apply_ufunc(spearmanr,
+                                    ds['loc_loaiciga'], ds['scale_loaiciga'],
+                                    input_core_dims=[['duration'], ['duration']],
+                                    # output_core_dims=[[]],
+                                    vectorize=True,
+                                    dask='parallelized',
+                                    output_dtypes=[DTYPE]
+                                    )
+    ds['scaling_ratio'] = ds['loc_loaiciga'] / ds['scale_loaiciga']
+
 
 def set_attrs(ds):
     """Set atrributes of a dataset
@@ -322,17 +342,17 @@ def main():
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         step3_duration_gradient(ds_fitted)
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
-        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        # ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(gradient_path, mode='w', encoding=encoding)
+        gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
+        encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
+        ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(gradient_path, mode='w', encoding=encoding)
 
         # ds_fitted = xr.open_zarr(gradient_path)
         # logger(["start pearson's r computation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        step4_pearsonr(ds_fitted)
+        step4_scaling_correlation(ds_fitted)
         # logger(["start writing pearson's r", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        pearson_path = os.path.join(DATA_DIR, ANNUAL_FILE_PEARSONR)
+        scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_SCALING)
         encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(pearson_path, mode='w', encoding=encoding)
+        ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(scaling_path, mode='w', encoding=encoding)
         print(ds_fitted)
         # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
 
