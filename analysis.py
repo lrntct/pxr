@@ -12,6 +12,7 @@ import dask
 from dask.diagnostics import ProgressBar
 import zarr
 import scipy.stats
+import statsmodels.api as sm
 
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
@@ -81,7 +82,7 @@ def slm_ols_wrapper(x, y):
     return results.params[1], results.params[0], results.rsquared, results.pvalues[0], results.bse[0]
 
 
-def linregress(ds, x, y, prefix, dims):
+def linregress(func, ds, x, y, prefix, dims):
     """ds: xarray dataset
     x, y: name of variables to use for the regression
     prefix: to be added before the indivudual result names
@@ -90,10 +91,10 @@ def linregress(ds, x, y, prefix, dims):
     lr_params = ['slope', 'intercept', 'rvalue', 'pvalue', 'stderr']
     array_names = ['{}_{}'.format(prefix, n) for n in lr_params]
 
-    # linregress faster without dask
+    # faster without dask
     ds.load()
     # return a tuple of DataArrays
-    res = xr.apply_ufunc(scipy.stats.linregress, ds[x], ds[y],
+    res = xr.apply_ufunc(func, ds[x], ds[y],
             input_core_dims=[dims, dims],
             output_core_dims=[[] for i in lr_params],
             vectorize=True,
@@ -103,6 +104,22 @@ def linregress(ds, x, y, prefix, dims):
     # add the data to the existing dataset
     for arr_name, arr in zip(array_names, res):
         ds[arr_name] = arr
+
+
+def nanlinregress(x, y):
+    """wrapper around statsmodels OLS to make it behave like scipy linregress.
+    Make use of its capacity to ignore NaN.
+    """
+    X = sm.add_constant(x)
+    results = sm.OLS(y, X, missing='drop').fit()
+
+    slope = results.params[1]
+    intercept = results.params[0]
+    rvalue = results.rsquared ** .5
+    pvalue = results.pvalues[1]
+    stderr = results.bse[1]
+
+    return slope, intercept, rvalue, pvalue, stderr
 
 
 def double_log(arr):
@@ -124,6 +141,9 @@ def step21_ranking(annual_maxs):
     # Merge arrays
     return xr.merge([annual_maxs, ranks])
 
+def gumbel_cdf(x, loc, scale):
+    z = (x - loc) / scale
+    return np.e**(-np.e**-z)
 
 def step22_gumbel_fit_loaiciga1999(ds):
     """Follow the steps described in:
@@ -138,16 +158,15 @@ def step22_gumbel_fit_loaiciga1999(ds):
     # linearize
     ds['estim_prob_linear'] = double_log(ds['estim_prob'])
     # First fit
-    linregress(ds, 'annual_max', 'estim_prob_linear', 'estim_prob_lr', ['year'])
+    linregress(scipy.stats.linregress, ds, 'annual_max', 'estim_prob_linear', 'estim_prob_lr', ['year'])
     # get provisional gumbel parameters
     ds['loc_prov'] = -ds['estim_prob_lr_intercept']/ds['estim_prob_lr_slope']
     ds['scale_prov'] = -1/ds['estim_prob_lr_slope']
     # Analytic probability F(x) from Gumbel CDF
-    z = (ds['annual_max'] - ds['loc_prov']) / ds['scale_prov']
-    ds['analytic_prob'] = np.e**(-np.e**-z)
+    ds['analytic_prob'] = gumbel_cdf(ds['annual_max'], ds['loc_prov'], ds['scale_prov'])
     # Get the final location and scale parameters
     ds['analytic_prob_linear'] = double_log(ds['analytic_prob'])
-    linregress(ds, 'annual_max', 'analytic_prob_linear', 'analytic_prob_lr', ['year'])
+    linregress(scipy.stats.linregress, ds, 'annual_max', 'analytic_prob_linear', 'analytic_prob_lr', ['year'])
     ds['loc_loaiciga'] = -ds['analytic_prob_lr_intercept']/ds['analytic_prob_lr_slope']
     ds['scale_loaiciga'] = -1/ds['analytic_prob_lr_slope']
     return ds
@@ -165,13 +184,35 @@ def step2bis_gumbel_fit_moments(ds):
     ds['scale_moments'] = magic_number2 * std
     return ds
 
-#
-# def step25_KS_test(ds):
-#     """Perform the Kolmogorov–Smirnov test
-#     """
-#     print(scipy.stats.kstest(ds_sel['annual_max'].values, 'gumbel_r', (ds_sel['loc_final'], ds_sel['scale_final'])))
-#     print(scipy.stats.kstest(ds_sel['annual_max'].values, 'gumbel_r', (loc_naive, scale_naive)))
 
+def ks2samp(x, y):
+    return np.max(np.abs(x-y))
+
+
+def step25_KS_test(ds):
+    """Perform the Kolmogorov–Smirnov test for the performed Gumbel fitting
+    """
+    ds = ds.chunk({'duration':-1})
+    ds['analytic_prob_loaiciga'] = gumbel_cdf(ds['annual_max'], ds['loc_loaiciga'], ds['scale_loaiciga'])
+    ds['ks_loaiciga'] = xr.apply_ufunc(ks2samp,
+                                    ds['estim_prob'], ds['analytic_prob_loaiciga'],
+                                    input_core_dims=[['duration'], ['duration']],
+                                    vectorize=True,
+                                    dask='parallelized',
+                                    output_dtypes=[DTYPE]
+                                    )
+    ds['analytic_prob_moments'] = gumbel_cdf(ds['annual_max'], ds['loc_moments'], ds['scale_moments'])
+    ds['ks_moments'] = xr.apply_ufunc(ks2samp,
+                                    ds['estim_prob'], ds['analytic_prob_moments'],
+                                    input_core_dims=[['duration'], ['duration']],
+                                    vectorize=True,
+                                    dask='parallelized',
+                                    output_dtypes=[DTYPE]
+                                    )
+    # Dcrit at the 0.05 confidence
+    len_dur = len(ds['duration'])
+    ds['Dcrit_5pct'] = 1.36 * np.sqrt((len_dur+len_dur)/(len_dur*len_dur))
+    return ds
 
 def step3_duration_gradient(ds):
     """Take a Dataset as input containing the fitted gumbel parameters
@@ -184,8 +225,8 @@ def step3_duration_gradient(ds):
     for var, log_var in zip(var_list, logvar_list):
         ds[log_var] = np.log10(ds[var])
     # Do the linear regression
-    linregress(ds, 'log_duration', 'log_location', 'loc_lr', ['duration'])
-    linregress(ds, 'log_duration', 'log_scale', 'scale_lr', ['duration'])
+    linregress(nanlinregress, ds, 'log_duration', 'log_location', 'loc_lr', ['duration'])
+    linregress(nanlinregress, ds, 'log_duration', 'log_scale', 'scale_lr', ['duration'])
 
 
 def pearsonr(x, y):
@@ -199,7 +240,7 @@ def spearmanr(x, y):
     """wrapper for the Spearman's r computation from scipy
     return only the r value
     """
-    return scipy.stats.spearmanr(x, y, nanpolicy='omit')[0]
+    return scipy.stats.spearmanr(x, y, nan_policy='omit')[0]
 
 
 def step4_scaling_correlation(ds):
@@ -226,7 +267,7 @@ def step4_scaling_correlation(ds):
                                     dask='parallelized',
                                     output_dtypes=[DTYPE]
                                     )
-    ds['scaling_ratio'] = ds['loc_loaiciga'] / ds['scale_loaiciga']
+    ds['scaling_ratio'] = ds['loc_lr_slope'] / ds['scale_lr_slope']
 
 
 def set_attrs(ds):
@@ -328,17 +369,19 @@ def main():
         # ds_ranked = set_attrs(xr.open_zarr(rank_path))#.loc[EXTRACT]
         # ds_fitted = step22_gumbel_fit_loaiciga1999(ds_ranked)
         gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
-        ds_fitted = xr.open_zarr(gumbel_path)
+        ds_fitted = xr.open_zarr(gumbel_path)#.loc[EXTRACT]
         # logger(['start moments gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         ds_fitted = step2bis_gumbel_fit_moments(ds_fitted.chunk(ANNUAL_CHUNKS))
-        print(ds_fitted)
+        ds_fitted = step25_KS_test(ds_fitted)
+        # print(ds_fitted)
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
+        gumbel_path2 = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL+'2')
         encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        # ds_fitted.to_zarr(gumbel_path, mode='w', encoding=encoding)
+        ds_fitted.to_zarr(gumbel_path2, mode='w', encoding=encoding)
         # print(ds_fitted)
 
         # fit duration scaling #
+        # ds_fitted = xr.open_zarr(gumbel_path).loc[EXTRACT]
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         step3_duration_gradient(ds_fitted)
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
@@ -353,7 +396,8 @@ def main():
         scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_SCALING)
         encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(scaling_path, mode='w', encoding=encoding)
-        print(ds_fitted)
+        print(ds_fitted.compute())
+        # print((~np.isfinite(ds_fitted)).sum().compute())
         # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
 
         # display params to compare with Rob's
