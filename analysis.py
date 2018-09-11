@@ -106,6 +106,8 @@ def linregress(ds, x, y, prefix, dims):
 
 
 def double_log(arr):
+    """Return a linearized Gumbel distribution
+    """
     return (np.log(np.log(1/arr))).astype(DTYPE)
 
 
@@ -132,40 +134,43 @@ def step22_gumbel_fit_loaiciga1999(ds):
     """
     n_obs = ds.annual_max.count(dim='year')
     # Estimate probability F{x} with the Weibull formula
-    ds['estimate_cdf'] = (ds['rank'] / (n_obs+1)).astype(DTYPE)
-    ds['gumbel_prov'] = double_log(ds['estimate_cdf'])
+    ds['estim_prob'] = (ds['rank'] / (n_obs+1)).astype(DTYPE)
+    # linearize
+    ds['estim_prob_linear'] = double_log(ds['estim_prob'])
     # First fit
-    linregress(ds, 'annual_max', 'gumbel_prov', 'prov_lr', ['year'])
+    linregress(ds, 'annual_max', 'estim_prob_linear', 'estim_prob_lr', ['year'])
     # get provisional gumbel parameters
-    ds['loc_prov'] = -ds['prov_lr_intercept']/ds['prov_lr_slope']
-    ds['scale_prov'] = -1/ds['prov_lr_slope']
+    ds['loc_prov'] = -ds['estim_prob_lr_intercept']/ds['estim_prob_lr_slope']
+    ds['scale_prov'] = -1/ds['estim_prob_lr_slope']
     # Analytic probability F(x) from Gumbel CDF
     z = (ds['annual_max'] - ds['loc_prov']) / ds['scale_prov']
-    ds['gumbel_cdf'] = np.e**(-np.e**-z)
+    ds['analytic_prob'] = np.e**(-np.e**-z)
     # Get the final location and scale parameters
-    ds['gumbel_final'] = double_log(ds['gumbel_cdf'])
-    linregress(ds, 'annual_max', 'gumbel_final', 'final_lr', ['year'])
-    ds['loc_final'] = -ds['final_lr_intercept']/ds['final_lr_slope']
-    ds['scale_final'] = -1/ds['final_lr_slope']
+    ds['analytic_prob_linear'] = double_log(ds['analytic_prob'])
+    linregress(ds, 'annual_max', 'analytic_prob_linear', 'analytic_prob_lr', ['year'])
+    ds['loc_loaiciga'] = -ds['analytic_prob_lr_intercept']/ds['analytic_prob_lr_slope']
+    ds['scale_loaiciga'] = -1/ds['analytic_prob_lr_slope']
     return ds
 
 
-def step2bis_gumbel_fit_naive(ds):
-    """
+def step2bis_gumbel_fit_moments(ds):
+    """Fit Gumbel using the method of moments
+    (Maidment 1993, cited by Bougadis & Adamowki 2006)
     """
     magic_number1 = 0.45
     magic_number2 = 0.7797
     mean = ds['annual_max'].mean(dim='year')
     std = ds['annual_max'].std(dim='year')
-    ds['loc_naive'] = mean - (magic_number1 * std)
-    ds['scale_naive'] = magic_number2 * std
+    ds['loc_moments'] = mean - (magic_number1 * std)
+    ds['scale_moments'] = magic_number2 * std
+    return ds
 
-
-def step25_KS_test(ds):
-    """
-    """
-    print(scipy.stats.kstest(ds_sel['annual_max'].values, 'gumbel_r', (ds_sel['loc_final'], ds_sel['scale_final'])))
-    print(scipy.stats.kstest(ds_sel['annual_max'].values, 'gumbel_r', (loc_naive, scale_naive)))
+#
+# def step25_KS_test(ds):
+#     """Perform the Kolmogorov–Smirnov test
+#     """
+#     print(scipy.stats.kstest(ds_sel['annual_max'].values, 'gumbel_r', (ds_sel['loc_final'], ds_sel['scale_final'])))
+#     print(scipy.stats.kstest(ds_sel['annual_max'].values, 'gumbel_r', (loc_naive, scale_naive)))
 
 
 def step3_duration_gradient(ds):
@@ -174,7 +179,7 @@ def step3_duration_gradient(ds):
     Keep the regression parameters as variables
     """
     # compute the log
-    var_list = ['duration', 'loc_final', 'scale_final']
+    var_list = ['duration', 'loc_loaiciga', 'scale_loaiciga']
     logvar_list = ['log_duration', 'log_location', 'log_scale']
     for var, log_var in zip(var_list, logvar_list):
         ds[log_var] = np.log10(ds[var])
@@ -299,33 +304,37 @@ def main():
 
 
         # fit Gumbel #
-        # logger(['start gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # ds_ranked = set_attrs(xr.open_zarr(rank_path))
+        # logger(['start iterative gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # ds_ranked = set_attrs(xr.open_zarr(rank_path))#.loc[EXTRACT]
         # ds_fitted = step22_gumbel_fit_loaiciga1999(ds_ranked)
+        gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
+        ds_fitted = xr.open_zarr(gumbel_path)
+        # logger(['start moments gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        ds_fitted = step2bis_gumbel_fit_moments(ds_fitted.chunk(ANNUAL_CHUNKS))
+        print(ds_fitted)
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
-        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        # ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(gumbel_path, mode='w', encoding=encoding)
-        # ds_fitted = set_attrs(xr.open_dataset(gumbel_path)).loc[EXTRACT]
+        gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
+        encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
+        # ds_fitted.to_zarr(gumbel_path, mode='w', encoding=encoding)
         # print(ds_fitted)
 
         # fit duration scaling #
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # step3_duration_gradient(ds_fitted)
+        step3_duration_gradient(ds_fitted)
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         # ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(gradient_path, mode='w', encoding=encoding)
-        # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # print(np.isfinite(ds_fitted))
-        # print(ds_fitted.isnull().sum().compute())
 
-        ds_fitted = xr.open_zarr(gradient_path)
+        # ds_fitted = xr.open_zarr(gradient_path)
+        # logger(["start pearson's r computation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         step4_pearsonr(ds_fitted)
+        # logger(["start writing pearson's r", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         pearson_path = os.path.join(DATA_DIR, ANNUAL_FILE_PEARSONR)
         encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(pearson_path, mode='w', encoding=encoding)
         print(ds_fitted)
+        # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
 
         # display params to compare with Rob's
         # print(ds_fitted[['loc_final', 'scale_final']].loc[{'site':'kampala'}].to_dataframe().transpose())
