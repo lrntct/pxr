@@ -111,13 +111,20 @@ def nanlinregress(x, y):
     Make use of its capacity to ignore NaN.
     """
     X = sm.add_constant(x)
-    results = sm.OLS(y, X, missing='drop').fit()
-
-    slope = results.params[1]
-    intercept = results.params[0]
-    rvalue = results.rsquared ** .5
-    pvalue = results.pvalues[1]
-    stderr = results.bse[1]
+    try:
+        results = sm.OLS(y, X, missing='drop').fit()
+    except ValueError:
+        slope = np.nan
+        intercept = np.nan
+        rvalue = np.nan
+        pvalue = np.nan
+        stderr = np.nan
+    else:
+        slope = results.params[1]
+        intercept = results.params[0]
+        rvalue = results.rsquared ** .5
+        pvalue = results.pvalues[1]
+        stderr = results.bse[1]
 
     return slope, intercept, rvalue, pvalue, stderr
 
@@ -368,20 +375,20 @@ def main():
         # logger(['start iterative gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # ds_ranked = set_attrs(xr.open_zarr(rank_path))#.loc[EXTRACT]
         # ds_fitted = step22_gumbel_fit_loaiciga1999(ds_ranked)
-        gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
-        ds_fitted = xr.open_zarr(gumbel_path)#.loc[EXTRACT]
+        # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
+        # ds_fitted = xr.open_zarr(gumbel_path)#.loc[EXTRACT]
         # logger(['start moments gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        ds_fitted = step2bis_gumbel_fit_moments(ds_fitted.chunk(ANNUAL_CHUNKS))
-        ds_fitted = step25_KS_test(ds_fitted)
+        # ds_fitted = step2bis_gumbel_fit_moments(ds_fitted.chunk(ANNUAL_CHUNKS))
+        # ds_fitted = step25_KS_test(ds_fitted)
         # print(ds_fitted)
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         gumbel_path2 = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL+'2')
-        encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        ds_fitted.to_zarr(gumbel_path2, mode='w', encoding=encoding)
+        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
+        # ds_fitted.to_zarr(gumbel_path2, mode='w', encoding=encoding)
         # print(ds_fitted)
 
         # fit duration scaling #
-        # ds_fitted = xr.open_zarr(gumbel_path).loc[EXTRACT]
+        ds_fitted = xr.open_zarr(gumbel_path2)#.loc[EXTRACT]
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         step3_duration_gradient(ds_fitted)
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
