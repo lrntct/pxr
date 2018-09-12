@@ -152,7 +152,6 @@ def plot_gumbel_per_site(ds, sites, fig_name):
     DURATION = 6
     # extract sites values from the dataset as pandas dataframes
     dict_cdf = {}
-    # dict_gof = {}
     for site_name, site_coord in sites.items():
         dict_pvalues = {}
         ds_sel = ds.sel(latitude=site_coord[0],
@@ -160,16 +159,10 @@ def plot_gumbel_per_site(ds, sites, fig_name):
                         duration=DURATION,
                         method='nearest').drop(['latitude', 'longitude', 'duration'])
         # Keep only wanted values as dataframe
-        # print(ds_sel)
         keep_col = ['estim_prob', 'analytic_prob_moments', 'analytic_prob_loaiciga', 'annual_max']
-        # print(ds_sel.load())
         df_cdf = ds_sel[keep_col].load().to_dataframe().set_index('annual_max', drop=True).sort_index()
-        # print(df_cdf)
         dict_cdf[site_name] = df_cdf
-        dict_gof[site_name] = pd.Series(dict_pvalues)
 
-    # df_gof = pd.DataFrame(dict_gof)
-    # df_gof.to_csv('GoF.csv')
 
     fig, axes = plt.subplots(1, 2, sharey=True, figsize=(8,4))
     for (site_name, df), ax in zip(dict_cdf.items(), axes):
@@ -209,7 +202,7 @@ def main():
     #            '$r^2$', 'gumbel_r2.png', sqr=True)
 
     # print((~np.isfinite(ds)).sum().compute())
-    # plot_gumbel_per_site(ds, STUDY_SITES, 'sites_gumbel.png')
+    plot_gumbel_per_site(ds_era, STUDY_SITES, 'sites_gumbel.png')
     # scaling_per_site(ds_era, STUDY_SITES, 'sites_scaling.png')
 
     # single_map(ds_era['scaling_pearsonr'],
