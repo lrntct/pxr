@@ -203,7 +203,7 @@ def step25_KS_test(ds):
     ds['analytic_prob_loaiciga'] = gumbel_cdf(ds['annual_max'], ds['loc_loaiciga'], ds['scale_loaiciga'])
     ds['ks_loaiciga'] = xr.apply_ufunc(ks2samp,
                                     ds['estim_prob'], ds['analytic_prob_loaiciga'],
-                                    input_core_dims=[['duration'], ['duration']],
+                                    input_core_dims=[['year'], ['year']],
                                     vectorize=True,
                                     dask='parallelized',
                                     output_dtypes=[DTYPE]
@@ -211,7 +211,7 @@ def step25_KS_test(ds):
     ds['analytic_prob_moments'] = gumbel_cdf(ds['annual_max'], ds['loc_moments'], ds['scale_moments'])
     ds['ks_moments'] = xr.apply_ufunc(ks2samp,
                                     ds['estim_prob'], ds['analytic_prob_moments'],
-                                    input_core_dims=[['duration'], ['duration']],
+                                    input_core_dims=[['year'], ['year']],
                                     vectorize=True,
                                     dask='parallelized',
                                     output_dtypes=[DTYPE]
