@@ -9,6 +9,8 @@ import datetime
 import numpy as np
 import xarray as xr
 import pandas as pd
+import geopandas as gpd
+import shapely.geometry
 import seaborn as sns
 import cartopy as ctpy
 import matplotlib.pyplot as plt
@@ -17,6 +19,7 @@ DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
 HOURLY_FILE = 'era5_2000-2012_precip.zarr'
 ANNUAL_FILE = 'era5_2000-2012_precip_scaling.zarr'
 GAUGES_FILE = '../data/GHCN/ghcn.nc'
+GAUGES_ANNUAL_FILE = '../data/GHCN/ghcn_2000-2012_precip_scaling.zarr'
 PLOT_DIR = '../plot'
 
 EXTRACT = dict(latitude=slice(45, -45),
@@ -163,7 +166,6 @@ def plot_gumbel_per_site(ds, sites, fig_name):
         df_cdf = ds_sel[keep_col].load().to_dataframe().set_index('annual_max', drop=True).sort_index()
         dict_cdf[site_name] = df_cdf
 
-
     fig, axes = plt.subplots(1, 2, sharey=True, figsize=(8,4))
     for (site_name, df), ax in zip(dict_cdf.items(), axes):
         dict_cdf[site_name].plot(linestyle=None, marker='o', markersize=1.5,
@@ -184,9 +186,50 @@ def plot_gumbel_per_site(ds, sites, fig_name):
     plt.close()
 
 
+def plot_gauges_data(ds, ymin, ymax, fig_name):
+    """Plot the completeness of the gauges data
+    """
+    da_year_count = ds['precipitation'].groupby('date.year').count(dim='date')
+    year_count_sel = da_year_count.sel(year=slice(ymin, ymax))
+    # plot
+    p = year_count_sel.plot(vmin=int(365*.9))
+    ax = plt.gca()
+    labels = list(da_year_count['code'].values)
+    ax.set_yticks(range(len(labels)))
+    ax.set_yticklabels(labels)
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.close()
+
+
+def plot_gauges_map(ds, fig_name):
+    """convert dataset in geopandas DataFrame
+    plot it
+    """
+    ds_sel = ds.sel(duration=24, year=2000)['annual_max']
+    # print(ds_sel)
+    df = ds_sel.to_dataframe().set_index('code', drop=True).drop(axis=1, labels=['annual_max', 'year', 'duration'])
+
+    df['geometry'] = [shapely.geometry.Point(lon, lat) for lon, lat in zip(df['longitude'], df['latitude'])]
+    gdf = gpd.GeoDataFrame(df, geometry='geometry')
+    # print(gdf)
+
+    plt.figure(figsize=(8, 5))
+    ax_p = plt.gca(projection=ctpy.crs.Robinson(), aspect='auto')
+    ax_p.set_global()
+    ax_p.coastlines(linewidth=.3, color='black')
+    gdf.plot(ax=ax_p, transform=ctpy.crs.PlateCarree())
+    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.close()
+
 def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ANNUAL_FILE))
-    print(ds_era)
+    # print(ds_era)
+    # ds_gauges = xr.open_dataset(GAUGES_FILE)
+    ds_annual_gauges = xr.open_zarr(GAUGES_ANNUAL_FILE)
+    # print(ds_annual_gauges.load())
+    plot_gauges_map(ds_annual_gauges, 'gauges_map.png')
+    # plot_gauges_data(ds_gauges, 2000, 2012 'gauges.png')
 
     # print(ds[['scale_prov', 'scale_final']].loc[{'duration':24, 'latitude':0, 'longitude':slice(0, 1)}].load())
     # multi_maps(ds_era, ['loc_final', 'scale_final'],
@@ -202,7 +245,7 @@ def main():
     #            '$r^2$', 'gumbel_r2.png', sqr=True)
 
     # print((~np.isfinite(ds)).sum().compute())
-    plot_gumbel_per_site(ds_era, STUDY_SITES, 'sites_gumbel.png')
+    # plot_gumbel_per_site(ds_era, STUDY_SITES, 'sites_gumbel.png')
     # scaling_per_site(ds_era, STUDY_SITES, 'sites_scaling.png')
 
     # single_map(ds_era['scaling_pearsonr'],
@@ -220,7 +263,7 @@ def main():
     #        cbar_label="Spearman's $\\rho$",
     #        fig_name='spearmanr.png')
 
-    # multi_maps(ds_era.loc[{'duration':6}], ['ks_loaiciga', 'ks_moments'],
+    # multi_maps(ds_era, ['ks_loaiciga', 'ks_moments'],
     #            ['Fitting accuracy for iterative method (d=6h)', 'Fitting accuracy for mthod of moments (d=6h)'],
     #            "Kolmogorov-Smirnov's D", 'fitting_accuracy.png', sqr=False)
 
