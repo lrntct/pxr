@@ -15,13 +15,13 @@ import scipy.stats
 import statsmodels.api as sm
 
 
-DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
-HOURLY_FILE = 'era5_2000-2012_precip.zarr'
-ANNUAL_FILE = 'era5_2000-2012_precip_annual_max.zarr'
-ANNUAL_FILE_RANK = 'era5_2000-2012_precip_ranked.zarr'
-ANNUAL_FILE_GUMBEL = 'era5_2000-2012_precip_gumbel.zarr'
-ANNUAL_FILE_GRADIENT = 'era5_2000-2012_precip_gradient.zarr'
-ANNUAL_FILE_SCALING = 'era5_2000-2012_precip_scaling.zarr'
+DATA_DIR = '../data/GHCN/'
+HOURLY_FILE = 'ghcn_2000-2012_precip.zarr'
+ANNUAL_FILE = 'ghcn_2000-2012_precip_annual_max.zarr'
+ANNUAL_FILE_RANK = 'ghcn_2000-2012_precip_ranked.zarr'
+ANNUAL_FILE_GUMBEL = 'ghcn_2000-2012_precip_gumbel.zarr'
+ANNUAL_FILE_GRADIENT = 'ghcn_2000-2012_precip_gradient.zarr'
+ANNUAL_FILE_SCALING = 'ghcn_2000-2012_precip_scaling.zarr'
 
 LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
 
@@ -40,8 +40,11 @@ EXTRACT = dict(latitude=slice(0, -5),
                longitude=slice(0, 5))
 
 # Event durations in hours - has to be adjusted to temporal resolution for the moving window
-DURATIONS = [i+1 for i in range(24)] + [i for i in range(24+6,48+6,6)] + [i*24 for i in [5,10,15]]
-TEMP_RES = 1  # Temporal resolution in hours
+# DURATIONS = [i+1 for i in range(24)] + [i for i in range(24+6,48+6,6)] + [i*24 for i in [5,10,15]]
+# TEMP_RES = 1  # Temporal resolution in hours
+DURATIONS = [(i+1)*24 for i in range(15)]
+TEMP_RES = 24  # Temporal resolution in hours
+
 
 DTYPE = 'float32'
 
@@ -343,17 +346,13 @@ def main():
         start_time = datetime.now()
         # Load hourly data #
         # logger(['start computing annual maxima', str(start_time), 0])
-        # hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
-        # hourly = xr.open_zarr(hourly_path).chunk(HOURLY_CHUNKS)
-        # hourly_kamp = hourly.sel(latitude=KAMPALA_COORD[0],
-        #                          longitude=KAMPALA_COORD[1],
-        #                          method='nearest')
-        # print(hourly_kamp.max().compute())
+        hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
+        hourly = xr.open_zarr(hourly_path)#.chunk(HOURLY_CHUNKS)
         # hourly_extract = hourly.loc[EXTRACT]
         # print(hourly)
 
         # Get annual maxima #
-        # annual_maxs = step1_annual_maxs_of_roll_mean(hourly, DURATIONS, TEMP_RES).chunk(ANNUAL_CHUNKS)
+        annual_maxs = step1_annual_maxs_of_roll_mean(hourly, DURATIONS, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
         # amax_path = os.path.join(DATA_DIR, ANNUAL_FILE)
         # annual_maxs.to_dataset().to_zarr(amax_path, mode='w', encoding=ANNUAL_ENCODING)
 
@@ -362,7 +361,7 @@ def main():
         # annual_maxs = amax_rob()  # to compare with Rob's values
 
         # Do the ranking
-        # ds_ranked = step21_ranking(annual_maxs).chunk(ANNUAL_CHUNKS)
+        ds_ranked = step21_ranking(annual_maxs)#.chunk(ANNUAL_CHUNKS)
         # print(ds_ranked)
         # logger(['start writing ranks', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # encoding = copy.deepcopy(ANNUAL_ENCODING)
@@ -374,27 +373,27 @@ def main():
         # fit Gumbel #
         # logger(['start iterative gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # ds_ranked = set_attrs(xr.open_zarr(rank_path))#.loc[EXTRACT]
-        # ds_fitted = step22_gumbel_fit_loaiciga1999(ds_ranked)
+        ds_fitted = step22_gumbel_fit_loaiciga1999(ds_ranked)
         # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
         # ds_fitted = xr.open_zarr(gumbel_path)#.loc[EXTRACT]
         # logger(['start moments gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # ds_fitted = step2bis_gumbel_fit_moments(ds_fitted.chunk(ANNUAL_CHUNKS))
-        # ds_fitted = step25_KS_test(ds_fitted)
+        ds_fitted = step2bis_gumbel_fit_moments(ds_fitted)
+        ds_fitted = step25_KS_test(ds_fitted)
         # print(ds_fitted)
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        gumbel_path2 = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL+'2')
+        # gumbel_path2 = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL+'2')
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         # ds_fitted.to_zarr(gumbel_path2, mode='w', encoding=encoding)
         # print(ds_fitted)
 
         # fit duration scaling #
-        ds_fitted = xr.open_zarr(gumbel_path2)#.loc[EXTRACT]
+        # ds_fitted = xr.open_zarr(gumbel_path2)#.loc[EXTRACT]
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         step3_duration_gradient(ds_fitted)
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
-        encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(gradient_path, mode='w', encoding=encoding)
+        # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
+        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
+        # ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(gradient_path, mode='w', encoding=encoding)
 
         # ds_fitted = xr.open_zarr(gradient_path)
         # logger(["start pearson's r computation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
@@ -402,8 +401,8 @@ def main():
         # logger(["start writing pearson's r", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_SCALING)
         encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(scaling_path, mode='w', encoding=encoding)
-        print(ds_fitted.compute())
+        ds_fitted.to_zarr(scaling_path, mode='w', encoding=encoding)
+        # print(ds_fitted.compute())
         # print((~np.isfinite(ds_fitted)).sum().compute())
         # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
 
