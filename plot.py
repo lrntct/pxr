@@ -5,6 +5,7 @@ matplotlib.use("Agg")
 import sys
 import os
 import datetime
+import math
 
 import numpy as np
 import xarray as xr
@@ -14,6 +15,7 @@ import shapely.geometry
 import seaborn as sns
 import cartopy as ctpy
 import matplotlib.pyplot as plt
+
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
 HOURLY_FILE = 'era5_2000-2012_precip.zarr'
@@ -73,66 +75,115 @@ def multi_maps(ds, var_names, disp_names, value_name, fig_name, sqr=False):
     plt.close()
 
 
-def scaling_per_site(ds, sites, fig_name):
-    # extract sites values from the dataset as pandas dataframes
-    dict_df = {}
-    scaling_coeffs_series = []
-    for site_name, site_coord in sites.items():
-        ds_sel = ds.sel(latitude=site_coord[0], longitude=site_coord[1], method='nearest').drop(['latitude', 'longitude'])
-        scaling_coeffs = ['loc_lr_intercept', 'loc_lr_slope',
-                          'scale_lr_intercept', 'scale_lr_slope',
-                          'scaling_pearsonr', 'scaling_spearmanr', 'scaling_ratio']
-        scaling_coeffs_series.append(ds_sel[scaling_coeffs].to_array(name=site_name).to_series())
-        dict_df[site_name] = ds_sel[['loc_loaiciga', 'scale_loaiciga']].to_dataframe()
-    df_scaling_coeffs = pd.DataFrame(scaling_coeffs_series).T
-    # print(df_scaling_coeffs)
-    # print(dict_df['Kisumu'])
+def scaling_per_site(ds_era, ds_ghcn, fig_name):
+    """
+    """
+    # ORGANIZE DATA #
+    scaling_coeffs = ['loc_lr_intercept', 'loc_lr_slope',
+                      'scale_lr_intercept', 'scale_lr_slope',
+                      'scaling_pearsonr', 'scaling_spearmanr', 'scaling_ratio']
+    # Set station coordinates to station name
+    ds_ghcn.coords['station'] = ds_ghcn['name']
+    # create a dict of dataframe. One per site
 
-    fig, axes = plt.subplots(1, 2, sharey=True, figsize=(8,4))
-    for (site_name, df), ax in zip(dict_df.items(), axes):
+    # dict of coordinates. Used to select sites on ERA5 dataset
+    sites = {n:(lat,lon) for n, lat, lon in zip(ds_ghcn['name'].values,
+                                                ds_ghcn['latitude'].values,
+                                                ds_ghcn['longitude'].values)}
+
+    ds_era_caling_coeffs = ds_era[scaling_coeffs]
+    # extract sites values from the ERA5 dataset as pandas dataframes
+    dict_df = {}
+    dict_scaling_coeffs = {}
+    for site_name, site_coord in sites.items():
+        ds_era_sel = ds_era.sel(latitude=site_coord[0], longitude=site_coord[1], method='nearest').drop(['latitude', 'longitude'])
+        df_era = ds_era_sel[['loc_loaiciga', 'scale_loaiciga']].to_dataframe()
+        df_era.rename(columns={'loc_loaiciga': 'era_loc',
+                               'scale_loaiciga': 'era_scale'},
+                      inplace=True)
+
+        ds_ghcn_sel = ds_ghcn[['loc_loaiciga', 'scale_loaiciga']]
+        df_ghcn = ds_ghcn_sel.sel(station=site_name).to_dataframe()
+        df_ghcn.rename(columns={'loc_loaiciga': 'ghcn_loc',
+                                  'scale_loaiciga': 'ghcn_scale'},
+                         inplace=True)
+        df_ghcn.drop(['latitude', 'longitude', 'name', 'station', 'code'], axis=1, inplace=True)
+
+        dict_df[site_name] = pd.concat([df_era, df_ghcn], axis=1, sort=False)
+
+        era_scaling_coeffs = ds_era_sel[scaling_coeffs].to_array(name='ERA5').to_series()
+        # print(era_scaling_coeffs)
+        ghcn_scaling_coeff = (ds_ghcn
+                                .sel(station=site_name)[scaling_coeffs]
+                                .drop(['station', 'name', 'code', 'latitude', 'longitude'])
+                                .to_array(name='GHCN')
+                                .to_series())
+        # print(ghcn_scaling_coeff)
+        dict_scaling_coeffs[site_name] = pd.concat([era_scaling_coeffs, ghcn_scaling_coeff], axis=1, sort=False)
+
+    # PLOT #
+    col_num = 2
+    row_num = math.ceil(len(sites)/2)
+    fig, axes = plt.subplots(row_num, col_num, sharey=True, sharex=True, figsize=(8,10))
+    for (site_name, df), ax in zip(dict_df.items(), axes.flat):
+        print(site_name)
         # calculate regression lines
-        eta = {}
+        df_scaling_coeffs = dict_scaling_coeffs[site_name]
         for p in ['loc', 'scale']:
-            inter_col = '{}_lr_intercept'.format(p)
-            slope_col = '{}_lr_slope'.format(p)
-            intercept = df_scaling_coeffs.loc[inter_col, site_name]
-            slope = df_scaling_coeffs.loc[slope_col, site_name]
-            eta[p] = slope
-            regline_col = '{}_lr'.format(p)
-            df[regline_col] = 10**intercept * df.index**slope
+            inter_row = '{}_lr_intercept'.format(p)
+            slope_row = '{}_lr_slope'.format(p)
+            for source in ['ERA5', 'GHCN']:
+                intercept = df_scaling_coeffs.loc[inter_row, source]
+                slope = df_scaling_coeffs.loc[slope_row, source]
+                regline_col = '{}_{}_lr'.format(source, p)
+                df[regline_col] = 10**intercept * df.index**slope
         # plot
-        linesyles = {'loc_loaiciga': dict(linestyle='None', marker='o', color='#1b9e77', label='Location $\mu$'),
-                     'loc_lr': dict(linestyle='solid', marker=None, color='#1b9e77', label='$d^{\eta(\mu)}$'),
-                     'scale_loaiciga': dict(linestyle='None', marker='o', color='#d95f02', label='Scale $\sigma$'),
-                     'scale_lr': dict(linestyle='solid', marker=None, color='#d95f02', label='$d^{\eta(\sigma)}$'),
+        linesyles = {
+            'era_loc': dict(linestyle='None', linewidth=1., marker='o', markersize=2, color='#1b9e77', label='Location $\mu$ (ERA5)'),
+            'ERA5_loc_lr': dict(linestyle='solid', linewidth=1., marker=None, markersize=2, color='#1b9e77', label='$d^{\eta(\mu)}$ (ERA5)'),
+            'era_scale': dict(linestyle='None', linewidth=2.0, marker='o', markersize=2, color='#d95f02', label='Scale $\sigma$ (ERA5)'),
+            'ERA5_scale_lr': dict(linestyle='solid', linewidth=1., marker=None, markersize=2, color='#d95f02', label='$d^{\eta(\sigma)}$ (ERA5)'),
+            'ghcn_loc': dict(linestyle='None', linewidth=1.0, marker='v', markersize=3, color='#1b9e77', label='Location $\mu$ (GHCN)'),
+            'GHCN_loc_lr': dict(linestyle='dashed', linewidth=1.0, marker=None, markersize=2, color='#1b9e77', label='$d^{\eta(\mu)}$ (GHCN)'),
+            'ghcn_scale': dict(linestyle='None', linewidth=1.0, marker='v', markersize=3, color='#d95f02', label='Scale $\sigma$ (GHCN)'),
+            'GHCN_scale_lr': dict(linestyle='dashed', linewidth=1.0, marker=None, markersize=2, color='#d95f02', label='$d^{\eta(\sigma)}$ (GHCN)')
                     }
         for col, styles in linesyles.items():
-            df[col].plot(loglog=True, title=site_name, ax=ax, markersize=2, label=styles['label'],
-                    linestyle=styles['linestyle'], marker=styles['marker'], color=styles['color'])
+            df[col].plot(loglog=True, title=site_name, ax=ax, label=styles['label'],
+                    linestyle=styles['linestyle'], linewidth=styles['linewidth'],
+                    markersize=styles['markersize'],
+                    marker=styles['marker'], color=styles['color'])
 
         lines, labels = ax.get_legend_handles_labels()
         ax.set_xlabel('$d$ (hours)')
         ax.set_ylabel('$\mu, \sigma$')
         ax.set_xticks([1, 3, 6, 12, 24, 48, 120, 360])
         ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
-
-        txt = ("$\eta(\mu)$ = {:.2f}\n"
-               "$\eta(\sigma)$ = {:.2f}\n"
-               "Pearson's r = {:.2f}\n"
-               "Spearman's $\\rho$ = {:.2f}\n"
-               "$\eta(\mu) / \eta(\sigma)$  = {:.2f}").format(
-                        eta['loc'], eta['scale'],
-                        df_scaling_coeffs.loc['scaling_pearsonr', site_name],
-                        df_scaling_coeffs.loc['scaling_spearmanr', site_name],
-                        df_scaling_coeffs.loc['scaling_ratio', site_name]
-                        )
-        t = ax.text(0.05, 0.20, txt, horizontalalignment='left', backgroundcolor='white',
-                verticalalignment='center', transform=ax.transAxes, size=10)
-        t.set_bbox(dict(alpha=0))
+        # Text box
+        table_row = "{:<15s} {:>5.2f} {:>5.2f}\n"
+        txt = ["{:<15s} {:>5s} {:>5s}\n".format('Parameter', 'ERA5', 'GHCN'),
+               table_row.format('Location slope',
+                                #'$\eta(\mu)$',
+                                df_scaling_coeffs.loc['loc_lr_slope', 'ERA5'],
+                                df_scaling_coeffs.loc['loc_lr_slope', 'GHCN']),
+               table_row.format('Scale slope',
+                                #'$\eta(\sigma)$',
+                                df_scaling_coeffs.loc['scale_lr_slope', 'ERA5'],
+                                df_scaling_coeffs.loc['scale_lr_slope', 'GHCN']),
+               table_row.format('Slope ratio',
+                                #'$\eta(\mu) / \eta(\sigma)$',
+                                df_scaling_coeffs.loc['scaling_ratio', 'ERA5'],
+                                df_scaling_coeffs.loc['scaling_ratio', 'GHCN'])
+            ]
+        t = ax.text(0.01, 0.0, ''.join(txt), backgroundcolor='white',
+                    horizontalalignment='left', verticalalignment='bottom',
+                    transform=ax.transAxes, size=7, family='monospace'
+                    )
+        t.set_bbox(dict(alpha=0))  # force transparent background
     # plt.legend(lines, labels, loc='lower center', ncol=4)
     lgd = fig.legend(lines, labels, loc='lower center', ncol=4)
     plt.tight_layout()
-    plt.subplots_adjust(bottom=.24, wspace=None, hspace=None)
+    plt.subplots_adjust(bottom=.1, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
     plt.close()
 
@@ -206,14 +257,14 @@ def plot_gauges_map(ds, fig_name):
     """convert dataset in geopandas DataFrame
     plot it
     """
+    # Create a GeoDataFrame
     ds_sel = ds.sel(duration=24, year=2000)['annual_max']
-    # print(ds_sel)
     df = ds_sel.to_dataframe().set_index('code', drop=True).drop(axis=1, labels=['annual_max', 'year', 'duration'])
-
     df['geometry'] = [shapely.geometry.Point(lon, lat) for lon, lat in zip(df['longitude'], df['latitude'])]
     gdf = gpd.GeoDataFrame(df, geometry='geometry')
     # print(gdf)
 
+    # Plot the gauges on a world map
     plt.figure(figsize=(8, 5))
     ax_p = plt.gca(projection=ctpy.crs.Robinson(), aspect='auto')
     ax_p.set_global()
@@ -222,14 +273,15 @@ def plot_gauges_map(ds, fig_name):
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
     plt.close()
 
+
 def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ANNUAL_FILE))
     # print(ds_era)
-    # ds_gauges = xr.open_dataset(GAUGES_FILE)
-    ds_annual_gauges = xr.open_zarr(GAUGES_ANNUAL_FILE)
+    # ds_ghcn = xr.open_dataset(GAUGES_FILE)
+    ds_annual_ghcn = xr.open_zarr(GAUGES_ANNUAL_FILE)
     # print(ds_annual_gauges.load())
-    plot_gauges_map(ds_annual_gauges, 'gauges_map.png')
-    # plot_gauges_data(ds_gauges, 2000, 2012 'gauges.png')
+    # plot_gauges_map(ds_annual_gauges, 'gauges_map.png')
+    # plot_gauges_data(ds_ghcn, 2000, 2012 'gauges.png')
 
     # print(ds[['scale_prov', 'scale_final']].loc[{'duration':24, 'latitude':0, 'longitude':slice(0, 1)}].load())
     # multi_maps(ds_era, ['loc_final', 'scale_final'],
@@ -246,7 +298,7 @@ def main():
 
     # print((~np.isfinite(ds)).sum().compute())
     # plot_gumbel_per_site(ds_era, STUDY_SITES, 'sites_gumbel.png')
-    # scaling_per_site(ds_era, STUDY_SITES, 'sites_scaling.png')
+    scaling_per_site(ds_era, ds_annual_ghcn, 'sites_scaling.png')
 
     # single_map(ds_era['scaling_pearsonr'],
     #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
