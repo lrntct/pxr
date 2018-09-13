@@ -50,7 +50,8 @@ def ghcn_read_csv(data_dir):
         # Populate index
         for i, col_name in enumerate(COL_NAMES):
             idx[i].append(df_dropped[col_name][0])
-        da = df_dropped.PRCP.to_xarray()
+        # GHCN is in tenth of mm/day, we want mm/h
+        da = df_dropped.PRCP.to_xarray() / 24.
         da.name = 'precipitation'
         da = da.expand_dims('station')
         da.coords['station'] = [df_dropped['STATION'].unique()[0]]
@@ -60,22 +61,35 @@ def ghcn_read_csv(data_dir):
     date_idx = da_concat.coords['date'].values
     # Create multi-index for the other coordiantes (share the dimension)
     midx = pd.MultiIndex.from_arrays(idx, names=('code', 'name', 'latitude', 'longitude'))
-    da = xr.DataArray(da_concat.values, coords={'station': midx, 'date':date_idx}, dims=['station', 'date'])
+    da = xr.DataArray(da_concat.values, name='precipitation',
+                      coords={'station': midx, 'time':date_idx}, dims=['station', 'time'])
+    return da.to_dataset()
 
-    da.reset_index('station').to_netcdf(os.path.join(GHCN_DIR, 'ghcn.nc'), mode='w')
 
-    # da_annual = da.groupby('date.year').count(dim='date')
-    # for code in da_annual['code']:
-    #     print(code.values)
-    #     print(da_annual.sel(code=str(code.values),
-    #                     year=slice(2000, 2013)).values)
+def drop_stations(ds, ymin, ymax):
+    """keep only stations with more than 90% years with more than 90% of days
+    """
+    min_days = int(365*.9)
+    da_year_count = ds['precipitation'].groupby('time.year').count(dim='time')
+    year_count_sel = da_year_count.sel(year=slice(ymin, ymax))
+    min_years = int(len(year_count_sel['year']) * .9)
+    num_of_full_years = year_count_sel.where(year_count_sel > min_days, drop=True).count(dim='year')
+    kept_stations = num_of_full_years.where(num_of_full_years > min_years, drop=True)['code'].values
+    all_stations = da_year_count['code'].values
+    drop_stations = [s for s in all_stations if s not in kept_stations]
+    return ds.drop(drop_stations, dim='station').sel(time=slice(str(ymin), str(ymax)))
 
 
 def main():
-    ghcn_read_csv(GHCN_DIR)
-    # da_annual.plot()
+    ds = ghcn_read_csv(GHCN_DIR)
+    # ds.reset_index('station').to_netcdf(os.path.join(GHCN_DIR, 'ghcn.nc'), mode='w')
 
-    # print(np.isfinite(da).sum(dim='date'))
+    # keep only stations with enough records
+    ds_cleaned = drop_stations(ds, 2000, 2012)
+    print(ds_cleaned)
+    ds_cleaned.reset_index('station').to_zarr(os.path.join(GHCN_DIR, 'ghcn_2000-2012_precip.zarr'), mode='w')
+
+    # print(np.isfinite(da).sum(dim='time'))
     # da.plot()
     # plt.savefig('ghcn_test.png')
     # plt.close()
