@@ -19,10 +19,12 @@ import matplotlib.pyplot as plt
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
 HOURLY_FILE = 'era5_2000-2012_precip.zarr'
-ANNUAL_FILE = 'era5_2000-2012_precip_scaling.zarr'
+ANNUAL_FILE = 'era5_2000-2017_precip_scaling.zarr'
 ERA_MULTIDAILY_FILE = 'era5_2000-2012_precip_scaling_multidaily.zarr'
 GAUGES_FILE = '../data/GHCN/ghcn.nc'
 GAUGES_ANNUAL_FILE = '../data/GHCN/ghcn_2000-2012_precip_scaling.zarr'
+MIDAS_ANNUAL_FILE = '../data/MIDAS/midas_2000-2017_precip_scaling.nc'
+HADISD_ANNUAL_FILE = '../data/HadISD/hadisd_2000-2017_precip_scaling.nc'
 PLOT_DIR = '../plot'
 
 EXTRACT = dict(latitude=slice(45, -45),
@@ -76,7 +78,7 @@ def multi_maps(ds, var_names, disp_names, value_name, fig_name, sqr=False):
     plt.close()
 
 
-def prepare_scaling_per_site(ds_era, ds_era_multidaily, ds_ghcn):
+def prepare_scaling_per_site(ds_era, ds_gauges, name_col, ds_era_multidaily=None):
     """
     """
     # ORGANIZE DATA #
@@ -84,18 +86,18 @@ def prepare_scaling_per_site(ds_era, ds_era_multidaily, ds_ghcn):
                       'scale_lr_intercept', 'scale_lr_slope',
                       'scaling_pearsonr', 'scaling_spearmanr', 'scaling_ratio']
     # Set station coordinates to station name
-    ds_ghcn.coords['station'] = ds_ghcn['name']
+    ds_gauges.coords['station'] = ds_gauges[name_col]
 
     # dict of coordinates. Used to select sites on ERA5 dataset
-    sites = {n:(lat,lon) for n, lat, lon in zip(ds_ghcn['name'].values,
-                                                ds_ghcn['latitude'].values,
-                                                ds_ghcn['longitude'].values)
+    sites = {n:(lat,lon) for n, lat, lon in zip(ds_gauges[name_col].values,
+                                                ds_gauges['latitude'].values,
+                                                ds_gauges['longitude'].values)
              if n != 'HONOLULU OBSERVATORY 702.2, HI US'}  # Wrong values
-
+    print(sites)
     # extract sites values from the ERA5 dataset as pandas dataframes
     dict_df = {}
     dict_scaling_coeffs = {}
-    for site_name, site_coord in sites.items():
+    for site_name, site_coord in list(sites.items())[:8]:
         ds_era_sel = (ds_era.sel(latitude=site_coord[0],
                            longitude=site_coord[1],
                            method='nearest')
@@ -104,35 +106,48 @@ def prepare_scaling_per_site(ds_era, ds_era_multidaily, ds_ghcn):
         df_era.rename(columns={'loc_loaiciga': 'era_loc',
                                'scale_loaiciga': 'era_scale'},
                       inplace=True)
+        if ds_era_multidaily:
+            ds_era_multidaily_sel = (ds_era_multidaily
+                                    .sel(latitude=site_coord[0],
+                                        longitude=site_coord[1],
+                                        method='nearest')
+                                    .drop(['latitude', 'longitude']))
+            era_m_scaling_coeffs = ds_era_multidaily_sel[scaling_coeffs].to_array(name='ERA5_MULTIDAILY').to_series()
 
-        ds_era_multidaily_sel = (ds_era_multidaily
-                                 .sel(latitude=site_coord[0],
-                                      longitude=site_coord[1],
-                                      method='nearest')
-                                 .drop(['latitude', 'longitude']))
-
-        ds_ghcn_sel = ds_ghcn[['loc_loaiciga', 'scale_loaiciga']]
-        df_ghcn = ds_ghcn_sel.sel(station=site_name).to_dataframe()
-        df_ghcn.rename(columns={'loc_loaiciga': 'ghcn_loc',
-                                  'scale_loaiciga': 'ghcn_scale'},
+        ds_gauges_sel = ds_gauges[['loc_loaiciga', 'scale_loaiciga']]
+        df_gauges = ds_gauges_sel.sel(station=site_name).to_dataframe()
+        df_gauges.rename(columns={'loc_loaiciga': 'gauges_loc',
+                                  'scale_loaiciga': 'gauges_scale'},
                          inplace=True)
-        df_ghcn.drop(['latitude', 'longitude', 'name', 'station', 'code'], axis=1, inplace=True)
+        for c in ['latitude', 'longitude', name_col, 'station', 'code']:
+            try:
+                df_gauges.drop([c], axis=1, inplace=True)
+            except KeyError:
+                pass
 
-        dict_df[site_name] = pd.concat([df_era, df_ghcn], axis=1, sort=False)
+        dict_df[site_name] = pd.concat([df_era, df_gauges], axis=1, sort=False)
 
         era_scaling_coeffs = ds_era_sel[scaling_coeffs].to_array(name='ERA5').to_series()
-        era_m_scaling_coeffs = ds_era_multidaily_sel[scaling_coeffs].to_array(name='ERA5_MULTIDAILY').to_series()
         # print(era_scaling_coeffs)
-        ghcn_scaling_coeff = (ds_ghcn
+        gauges_scaling_coeff = (ds_gauges
                                 .sel(station=site_name)[scaling_coeffs]
-                                .drop(['station', 'name', 'code', 'latitude', 'longitude'])
-                                .to_array(name='GHCN')
+                                .to_array(name='gauges')
                                 .to_series())
-        # print(ghcn_scaling_coeff)
-        dict_scaling_coeffs[site_name] = pd.concat([era_scaling_coeffs,
-                                                    era_m_scaling_coeffs,
-                                                    ghcn_scaling_coeff],
-                                                   axis=1, sort=False)
+        for c in ['station', name_col, 'code', 'latitude', 'longitude']:
+            try:
+                gauges_scaling_coeff.drop([c], inplace=True)
+            except KeyError:
+                pass
+        # print(gauges_scaling_coeff)
+        if ds_era_multidaily:
+            dict_scaling_coeffs[site_name] = pd.concat([era_scaling_coeffs,
+                                                        era_m_scaling_coeffs,
+                                                        gauges_scaling_coeff],
+                                                    axis=1, sort=False)
+        else:
+            dict_scaling_coeffs[site_name] = pd.concat([era_scaling_coeffs,
+                                                        gauges_scaling_coeff],
+                                                    axis=1, sort=False)
     return dict_df, dict_scaling_coeffs
 
 
@@ -141,7 +156,7 @@ def plot_scaling_per_site(dict_df, dict_scaling_coeffs, fig_name):
     """
     col_num = 2
     row_num = math.ceil(len(dict_df)/2)
-    fig, axes = plt.subplots(row_num, col_num, sharey=True, sharex=True, figsize=(8,10))
+    fig, axes = plt.subplots(row_num, col_num, sharey=True, sharex=True, figsize=(4*col_num,3*row_num))
     for (site_name, df), ax in zip(dict_df.items(), axes.flat):
         print(site_name)
         # calculate regression lines
@@ -149,11 +164,14 @@ def plot_scaling_per_site(dict_df, dict_scaling_coeffs, fig_name):
         for p in ['loc', 'scale']:
             inter_row = '{}_lr_intercept'.format(p)
             slope_row = '{}_lr_slope'.format(p)
-            for source in ['ERA5', 'ERA5_MULTIDAILY', 'GHCN']:
-                intercept = df_scaling_coeffs.loc[inter_row, source]
-                slope = df_scaling_coeffs.loc[slope_row, source]
-                regline_col = '{}_{}_lr'.format(source, p)
-                df[regline_col] = 10**intercept * df.index**slope
+            for source in ['ERA5', 'ERA5_MULTIDAILY', 'gauges']:
+                try:
+                    intercept = df_scaling_coeffs.loc[inter_row, source]
+                    slope = df_scaling_coeffs.loc[slope_row, source]
+                    regline_col = '{}_{}_lr'.format(source, p)
+                    df[regline_col] = 10**intercept * df.index**slope
+                except KeyError:
+                    continue
         # plot
         linesyles = {
             'era_loc': dict(linestyle='None', linewidth=0, marker='o', markersize=2, color='#1b9e77', label='Location $\mu$ (ERA5)'),
@@ -162,46 +180,48 @@ def plot_scaling_per_site(dict_df, dict_scaling_coeffs, fig_name):
             'ERA5_scale_lr': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0, color='#d95f02', label='$d^{\eta(\sigma)}$ (ERA5)'),
             'ERA5_MULTIDAILY_loc_lr': dict(linestyle='dotted', linewidth=1., marker=None, markersize=0, color='#1b9e77', label='$d^{\eta(\mu)}$ (ERA5 daily)'),
             'ERA5_MULTIDAILY_scale_lr': dict(linestyle='dotted', linewidth=1., marker=None, markersize=0, color='#d95f02', label='$d^{\eta(\sigma)}$ (ERA5 daily)'),
-            'ghcn_loc': dict(linestyle='None', linewidth=0, marker='v', markersize=3, color='#1b9e77', label='Location $\mu$ (GHCN)'),
-            'GHCN_loc_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0, color='#1b9e77', label='$d^{\eta(\mu)}$ (GHCN)'),
-            'ghcn_scale': dict(linestyle='None', linewidth=0, marker='v', markersize=3, color='#d95f02', label='Scale $\sigma$ (GHCN)'),
-            'GHCN_scale_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0, color='#d95f02', label='$d^{\eta(\sigma)}$ (GHCN)')
+            'gauges_loc': dict(linestyle='None', linewidth=0, marker='v', markersize=3, color='#1b9e77', label='Location $\mu$ (gauges)'),
+            'gauges_loc_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0, color='#1b9e77', label='$d^{\eta(\mu)}$ (gauges)'),
+            'gauges_scale': dict(linestyle='None', linewidth=0, marker='v', markersize=3, color='#d95f02', label='Scale $\sigma$ (gauges)'),
+            'gauges_scale_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0, color='#d95f02', label='$d^{\eta(\sigma)}$ (gauges)')
                     }
         for col, styles in linesyles.items():
-            df[col].plot(loglog=True, title=site_name, ax=ax, label=styles['label'],
-                    linestyle=styles['linestyle'], linewidth=styles['linewidth'],
-                    markersize=styles['markersize'],
-                    marker=styles['marker'], color=styles['color'])
-
+            try:
+                df[col].plot(loglog=True, title=site_name, ax=ax, label=styles['label'],
+                        linestyle=styles['linestyle'], linewidth=styles['linewidth'],
+                        markersize=styles['markersize'],
+                        marker=styles['marker'], color=styles['color'])
+            except KeyError:
+                continue
         lines, labels = ax.get_legend_handles_labels()
         ax.set_xlabel('$d$ (hours)')
         ax.set_ylabel('$\mu, \sigma$')
         ax.set_xticks([1, 3, 6, 12, 24, 48, 120, 360])
         ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
         # Text box
-        table_row = "{:<11s} {:>5.2f} {:>8.2f} {:>5.2f}\n"
-        txt = ["{:<11s} {:>5s} {:>8s} {:>5s}\n".format('Parameter', 'ERA5', 'ERA5 day', 'GHCN'),
-               table_row.format('Loc. slope',
-                                #'$\eta(\mu)$',
-                                df_scaling_coeffs.loc['loc_lr_slope', 'ERA5'],
-                                df_scaling_coeffs.loc['loc_lr_slope', 'ERA5_MULTIDAILY'],
-                                df_scaling_coeffs.loc['loc_lr_slope', 'GHCN']),
-               table_row.format('Scale slope',
-                                #'$\eta(\sigma)$',
-                                df_scaling_coeffs.loc['scale_lr_slope', 'ERA5'],
-                                df_scaling_coeffs.loc['scale_lr_slope', 'ERA5_MULTIDAILY'],
-                                df_scaling_coeffs.loc['scale_lr_slope', 'GHCN']),
-               table_row.format('Slope ratio',
-                                #'$\eta(\mu) / \eta(\sigma)$',
-                                df_scaling_coeffs.loc['scaling_ratio', 'ERA5'],
-                                df_scaling_coeffs.loc['scaling_ratio', 'ERA5_MULTIDAILY'],
-                                df_scaling_coeffs.loc['scaling_ratio', 'GHCN'])
-            ]
-        t = ax.text(0.01, 0.0, ''.join(txt), backgroundcolor='white',
-                    horizontalalignment='left', verticalalignment='bottom',
-                    transform=ax.transAxes, size=7, family='monospace'
-                    )
-        t.set_bbox(dict(alpha=0))  # force transparent background
+        # table_row = "{:<11s} {:>5.2f} {:>8.2f} {:>5.2f}\n"
+        # txt = ["{:<11s} {:>5s} {:>8s} {:>5s}\n".format('Parameter', 'ERA5', 'ERA5 day', 'GHCN'),
+        #        table_row.format('Loc. slope',
+        #                         #'$\eta(\mu)$',
+        #                         df_scaling_coeffs.loc['loc_lr_slope', 'ERA5'],
+        #                         df_scaling_coeffs.loc['loc_lr_slope', 'ERA5_MULTIDAILY'],
+        #                         df_scaling_coeffs.loc['loc_lr_slope', 'GHCN']),
+        #        table_row.format('Scale slope',
+        #                         #'$\eta(\sigma)$',
+        #                         df_scaling_coeffs.loc['scale_lr_slope', 'ERA5'],
+        #                         df_scaling_coeffs.loc['scale_lr_slope', 'ERA5_MULTIDAILY'],
+        #                         df_scaling_coeffs.loc['scale_lr_slope', 'GHCN']),
+        #        table_row.format('Slope ratio',
+        #                         #'$\eta(\mu) / \eta(\sigma)$',
+        #                         df_scaling_coeffs.loc['scaling_ratio', 'ERA5'],
+        #                         df_scaling_coeffs.loc['scaling_ratio', 'ERA5_MULTIDAILY'],
+        #                         df_scaling_coeffs.loc['scaling_ratio', 'GHCN'])
+        #     ]
+        # t = ax.text(0.01, 0.0, ''.join(txt), backgroundcolor='white',
+        #             horizontalalignment='left', verticalalignment='bottom',
+        #             transform=ax.transAxes, size=7, family='monospace'
+        #             )
+        # t.set_bbox(dict(alpha=0))  # force transparent background
     # plt.legend(lines, labels, loc='lower center', ncol=4)
     lgd = fig.legend(lines, labels, loc='lower center', ncol=4)
     plt.tight_layout()
@@ -275,13 +295,13 @@ def plot_gauges_data(ds, ymin, ymax, fig_name):
     plt.close()
 
 
-def plot_gauges_map(ds, fig_name):
+def plot_gauges_map(ds, id_dim, fig_name):
     """convert dataset in geopandas DataFrame
     plot it
     """
     # Create a GeoDataFrame
     ds_sel = ds.sel(duration=24, year=2000)['annual_max']
-    df = ds_sel.to_dataframe().set_index('code', drop=True).drop(axis=1, labels=['annual_max', 'year', 'duration'])
+    df = ds_sel.to_dataframe().set_index(id_dim, drop=True).drop(axis=1, labels=['annual_max', 'year', 'duration'])
     df['geometry'] = [shapely.geometry.Point(lon, lat) for lon, lat in zip(df['longitude'], df['latitude'])]
     gdf = gpd.GeoDataFrame(df, geometry='geometry')
     # print(gdf)
@@ -298,21 +318,26 @@ def plot_gauges_map(ds, fig_name):
 
 def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ANNUAL_FILE))
-    # print(ds_era)
+    print(ds_era['Dcrit_5pct'])
+    print(ds_era[['ks_loaiciga', 'ks_moments']].load().quantile([0.95,0.99,0.999]))
     # ds_ghcn = xr.open_dataset(GAUGES_FILE)
-    ds_annual_ghcn = xr.open_zarr(GAUGES_ANNUAL_FILE)
-    ds_era_multidaily = xr.open_zarr(os.path.join(DATA_DIR, ERA_MULTIDAILY_FILE))
+    # ds_annual_midas = xr.open_dataset(MIDAS_ANNUAL_FILE)
+    # ds_annual_hadisd = xr.open_dataset(HADISD_ANNUAL_FILE)
+    
+    # ds_annual_ghcn = xr.open_zarr(GAUGES_ANNUAL_FILE)
+    # ds_era_multidaily = xr.open_zarr(os.path.join(DATA_DIR, ERA_MULTIDAILY_FILE))
     # print(ds_annual_gauges.load())
-    # plot_gauges_map(ds_annual_gauges, 'gauges_map.png')
+    # print(ds_annual_midas.load())
+    # plot_gauges_map(ds_annual_midas, 'src_name', 'midas_gauges_map.png')
     # plot_gauges_data(ds_ghcn, 2000, 2012 'gauges.png')
 
     # print(ds[['scale_prov', 'scale_final']].loc[{'duration':24, 'latitude':0, 'longitude':slice(0, 1)}].load())
-    # multi_maps(ds_era, ['loc_final', 'scale_final'],
+    # multi_maps(ds_era, ['loc_loaiciga', 'scale_loaiciga'],
     #             ['Location $\mu$', 'Scale $\sigma$'],
-    #             'Parameter value', 'gumbel_params.png')
+    #             'Parameter value', 'gumbel_params_24h_2000-2017.png')
     # multi_maps(ds_era, ['loc_lr_slope', 'scale_lr_slope'],
     #            ['Location-Duration relationship', 'Scale-duration relationship'],
-    #            '$\eta$', 'gumbel_scaling.png')
+    #            '$\eta$', 'gumbel_scaling_2000-2017.png')
     # print(ds.where(ds_era['log_location'].isnull()).count().compute())
 
     # multi_maps(ds_era, ['prov_lr_rvalue', 'final_lr_rvalue', 'loc_lr_rvalue', 'scale_lr_rvalue'],
@@ -321,8 +346,9 @@ def main():
 
     # print((~np.isfinite(ds)).sum().compute())
     # plot_gumbel_per_site(ds_era, STUDY_SITES, 'sites_gumbel.png')
-    dict_df, dict_scaling_coeffs = prepare_scaling_per_site(ds_era, ds_era_multidaily, ds_annual_ghcn)
-    plot_scaling_per_site(dict_df, dict_scaling_coeffs, 'sites_scaling_daily.pdf')
+    # dict_df, dict_scaling_coeffs = prepare_scaling_per_site(ds_era, ds_annual_ghcn, ds_era_multidaily)
+    # dict_df, dict_scaling_coeffs = prepare_scaling_per_site(ds_era, ds_annual_midas, 'src_name')
+    # plot_scaling_per_site(dict_df, dict_scaling_coeffs, 'sites_scaling_midas_2000-2017.pdf')
 
     # single_map(ds_era['scaling_pearsonr'],
     #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
@@ -332,7 +358,7 @@ def main():
     # single_map(ds_era['scaling_ratio'],
     #            title="Parameter scaling ratio",
     #            cbar_label='$\eta(\mu) / \eta(\sigma)$',
-    #            fig_name='scaling_ratio.png')
+    #            fig_name='scaling_ratio2000-2017.png')
 
     # single_map(ds_era['scaling_spearmanr'],
     #        title="Parameter scaling correlation",
@@ -340,7 +366,7 @@ def main():
     #        fig_name='spearmanr.png')
 
     # multi_maps(ds_era, ['ks_loaiciga', 'ks_moments'],
-    #            ['Fitting accuracy for iterative method (d=6h)', 'Fitting accuracy for mthod of moments (d=6h)'],
+    #            ['Fitting accuracy of the iterative method (d=24h)', 'Fitting accuracy of the method of moments (d=24h)'],
     #            "Kolmogorov-Smirnov's D", 'fitting_accuracy.png', sqr=False)
 
     # hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
