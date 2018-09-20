@@ -14,6 +14,7 @@ import geopandas as gpd
 import shapely.geometry
 import seaborn as sns
 import cartopy as ctpy
+from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import matplotlib.pyplot as plt
 
 
@@ -22,7 +23,7 @@ HOURLY_FILE = 'era5_2000-2012_precip.zarr'
 ANNUAL_FILE = 'era5_2000-2017_precip_scaling.zarr'
 ERA_MULTIDAILY_FILE = 'era5_2000-2012_precip_scaling_multidaily.zarr'
 GAUGES_FILE = '../data/GHCN/ghcn.nc'
-GAUGES_ANNUAL_FILE = '../data/GHCN/ghcn_2000-2012_precip_scaling.zarr'
+GHCN_ANNUAL_FILE = '../data/GHCN/ghcn_2000-2017_precip_annual_max.nc'
 MIDAS_ANNUAL_FILE = '../data/MIDAS/midas_2000-2017_precip_scaling.nc'
 HADISD_ANNUAL_FILE = '../data/HadISD/hadisd_2000-2017_precip_scaling.nc'
 PLOT_DIR = '../plot'
@@ -93,11 +94,16 @@ def prepare_scaling_per_site(ds_era, ds_gauges, name_col, ds_era_multidaily=None
                                                 ds_gauges['latitude'].values,
                                                 ds_gauges['longitude'].values)
              if n != 'HONOLULU OBSERVATORY 702.2, HI US'}  # Wrong values
-    print(sites)
+    # print(sites)
     # extract sites values from the ERA5 dataset as pandas dataframes
     dict_df = {}
     dict_scaling_coeffs = {}
-    for site_name, site_coord in list(sites.items())[:8]:
+    for site_name, site_coord in list(sites.items()):
+        # print(site_name)
+        if site_name not in [b'BRIZE NORTON', b'LITTLE RISSINGTON',
+                             b'LARKHILL', b'BOSCOMBE DOWN']:
+            continue
+        print(site_name)
         ds_era_sel = (ds_era.sel(latitude=site_coord[0],
                            longitude=site_coord[1],
                            method='nearest')
@@ -158,7 +164,7 @@ def plot_scaling_per_site(dict_df, dict_scaling_coeffs, fig_name):
     row_num = math.ceil(len(dict_df)/2)
     fig, axes = plt.subplots(row_num, col_num, sharey=True, sharex=True, figsize=(4*col_num,3*row_num))
     for (site_name, df), ax in zip(dict_df.items(), axes.flat):
-        print(site_name)
+        # print(site_name)
         # calculate regression lines
         df_scaling_coeffs = dict_scaling_coeffs[site_name]
         for p in ['loc', 'scale']:
@@ -173,21 +179,26 @@ def plot_scaling_per_site(dict_df, dict_scaling_coeffs, fig_name):
                 except KeyError:
                     continue
         # plot
+        # color-blind safe qualitative palette from colorbrewer2
+        c1a = '#6ba9ca'
+        c1b = '#1f78b4'
+        c2a = '#89c653'
+        c2b = '#33a02c'
         linesyles = {
-            'era_loc': dict(linestyle='None', linewidth=0, marker='o', markersize=2, color='#1b9e77', label='Location $\mu$ (ERA5)'),
-            'ERA5_loc_lr': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0, color='#1b9e77', label='$d^{\eta(\mu)}$ (ERA5)'),
-            'era_scale': dict(linestyle='None', linewidth=0, marker='o', markersize=2, color='#d95f02', label='Scale $\sigma$ (ERA5)'),
-            'ERA5_scale_lr': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0, color='#d95f02', label='$d^{\eta(\sigma)}$ (ERA5)'),
-            'ERA5_MULTIDAILY_loc_lr': dict(linestyle='dotted', linewidth=1., marker=None, markersize=0, color='#1b9e77', label='$d^{\eta(\mu)}$ (ERA5 daily)'),
-            'ERA5_MULTIDAILY_scale_lr': dict(linestyle='dotted', linewidth=1., marker=None, markersize=0, color='#d95f02', label='$d^{\eta(\sigma)}$ (ERA5 daily)'),
-            'gauges_loc': dict(linestyle='None', linewidth=0, marker='v', markersize=3, color='#1b9e77', label='Location $\mu$ (gauges)'),
-            'gauges_loc_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0, color='#1b9e77', label='$d^{\eta(\mu)}$ (gauges)'),
-            'gauges_scale': dict(linestyle='None', linewidth=0, marker='v', markersize=3, color='#d95f02', label='Scale $\sigma$ (gauges)'),
-            'gauges_scale_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0, color='#d95f02', label='$d^{\eta(\sigma)}$ (gauges)')
+            'era_loc': dict(linestyle='None', linewidth=0, marker='o', markersize=2, color=c1a, label='Location $\mu$ (ERA5)'),
+            'ERA5_loc_lr': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0, color=c1a, label='$d^{\eta(\mu)}$ (ERA5)'),
+            'era_scale': dict(linestyle='None', linewidth=0, marker='o', markersize=2, color=c2a, label='Scale $\sigma$ (ERA5)'),
+            'ERA5_scale_lr': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0, color=c2a, label='$d^{\eta(\sigma)}$ (ERA5)'),
+            'ERA5_MULTIDAILY_loc_lr': dict(linestyle='dotted', linewidth=1., marker=None, markersize=0, color=c1a, label='$d^{\eta(\mu)}$ (ERA5 daily)'),
+            'ERA5_MULTIDAILY_scale_lr': dict(linestyle='dotted', linewidth=1., marker=None, markersize=0, color=c2a, label='$d^{\eta(\sigma)}$ (ERA5 daily)'),
+            'gauges_loc': dict(linestyle='None', linewidth=0, marker='v', markersize=3, color=c1b, label='Location $\mu$ (gauges)'),
+            'gauges_loc_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0, color=c1b, label='$d^{\eta(\mu)}$ (gauges)'),
+            'gauges_scale': dict(linestyle='None', linewidth=0, marker='v', markersize=3, color=c2b, label='Scale $\sigma$ (gauges)'),
+            'gauges_scale_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0, color=c2b, label='$d^{\eta(\sigma)}$ (gauges)')
                     }
         for col, styles in linesyles.items():
             try:
-                df[col].plot(loglog=True, title=site_name, ax=ax, label=styles['label'],
+                df[col].plot(loglog=True, title=site_name.decode("utf-8"), ax=ax, label=styles['label'],
                         linestyle=styles['linestyle'], linewidth=styles['linewidth'],
                         markersize=styles['markersize'],
                         marker=styles['marker'], color=styles['color'])
@@ -225,7 +236,7 @@ def plot_scaling_per_site(dict_df, dict_scaling_coeffs, fig_name):
     # plt.legend(lines, labels, loc='lower center', ncol=4)
     lgd = fig.legend(lines, labels, loc='lower center', ncol=4)
     plt.tight_layout()
-    plt.subplots_adjust(bottom=.15, wspace=None, hspace=None)
+    plt.subplots_adjust(bottom=.2, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
     plt.close()
 
@@ -295,23 +306,35 @@ def plot_gauges_data(ds, ymin, ymax, fig_name):
     plt.close()
 
 
-def plot_gauges_map(ds, id_dim, fig_name):
+def plot_gauges_map(ds, id_dim, fig_name, global_extent=True):
     """convert dataset in geopandas DataFrame
     plot it
     """
     # Create a GeoDataFrame
-    ds_sel = ds.sel(duration=24, year=2000)['annual_max']
+    ds_sel = ds.sel(duration=24, year=2000)#['annual_max']
     df = ds_sel.to_dataframe().set_index(id_dim, drop=True).drop(axis=1, labels=['annual_max', 'year', 'duration'])
     df['geometry'] = [shapely.geometry.Point(lon, lat) for lon, lat in zip(df['longitude'], df['latitude'])]
-    gdf = gpd.GeoDataFrame(df, geometry='geometry')
-    # print(gdf)
+    gdf = gpd.GeoDataFrame(
+        df, geometry='geometry')#.cx[slice(-2, -1.5), slice(51, 52)]
+    print(gdf)
 
     # Plot the gauges on a world map
-    plt.figure(figsize=(8, 5))
-    ax_p = plt.gca(projection=ctpy.crs.Robinson(), aspect='auto')
-    ax_p.set_global()
+    plt.figure(figsize=(12, 12))
+    if global_extent:
+        ax_p = plt.gca(projection=ctpy.crs.Robinson(), aspect='auto')
+        ax_p.set_global()
+    else:
+        ax_p = plt.gca(projection=ctpy.crs.PlateCarree(), aspect='auto')
+        gl = ax_p.gridlines(crs=ctpy.crs.PlateCarree(), linewidth=.3,
+                            #color='black', alpha=0.5, linestyle='--',
+                            draw_labels=False,
+                            xlocs=np.arange(-10,10,0.25),
+                            ylocs=np.arange(45,70,0.25),
+                            )
     ax_p.coastlines(linewidth=.3, color='black')
-    gdf.plot(ax=ax_p, transform=ctpy.crs.PlateCarree())
+    gdf.plot(ax=ax_p, markersize=5, transform=ctpy.crs.PlateCarree())
+
+
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
     plt.close()
 
@@ -343,9 +366,11 @@ def main():
     # ds_era = xr.open_zarr(os.path.join(DATA_DIR, ANNUAL_FILE))
     # print(ds_era)
     # print(ds_era[['ks_loaiciga', 'ks_moments']].load().quantile([0.95,0.99,0.999]))
-    # ds_ghcn = xr.open_dataset(GAUGES_FILE)
+    # ds_ghcn = xr.open_dataset(GHCN_ANNUAL_FILE)
+    # print(ds_ghcn)
     ds_annual_midas = xr.open_dataset(MIDAS_ANNUAL_FILE)
     # ds_annual_hadisd = xr.open_dataset(HADISD_ANNUAL_FILE)
+    # print(ds_annual_midas)
 
     # hexbin(ds_era, 'loc_lr_slope', 'scale_lr_slope',
     #        'scaling_gradients_hexbin.png')
@@ -354,7 +379,8 @@ def main():
     # ds_era_multidaily = xr.open_zarr(os.path.join(DATA_DIR, ERA_MULTIDAILY_FILE))
     # print(ds_annual_gauges.load())
     # print(ds_annual_midas.load())
-    # plot_gauges_map(ds_annual_midas, 'src_name', 'midas_gauges_map.png')
+    plot_gauges_map(ds_annual_midas, 'src_name', 'midas_gauges_map.pdf', global_extent=False)
+    # plot_gauges_map(ds_ghcn, 'name', 'ghcn_gauges_map.pdf', global_extent=True)
     # plot_gauges_data(ds_ghcn, 2000, 2012 'gauges.png')
 
     # print(ds[['scale_prov', 'scale_final']].loc[{'duration':24, 'latitude':0, 'longitude':slice(0, 1)}].load())
@@ -374,7 +400,7 @@ def main():
     # plot_gumbel_per_site(ds_era, STUDY_SITES, 'sites_gumbel.png')
     # dict_df, dict_scaling_coeffs = prepare_scaling_per_site(ds_era, ds_annual_ghcn, ds_era_multidaily)
     # dict_df, dict_scaling_coeffs = prepare_scaling_per_site(ds_era, ds_annual_midas, 'src_name')
-    # plot_scaling_per_site(dict_df, dict_scaling_coeffs, 'sites_scaling_midas_2000-2017.pdf')
+    # plot_scaling_per_site(dict_df, dict_scaling_coeffs, 'sites_scaling_midas_select_2000-2017.pdf')
 
     # single_map(ds_era['scaling_pearsonr'],
     #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
@@ -407,6 +433,8 @@ def main():
     #            cbar_label='Precipitation rate (mm/hr)',
     #            fig_name='hourly_max.png')
 
+    block_one = ['BRIZE NORTON', 'LITTLE RISSINGTON']
+    block_two = ['LARKHILL', 'BOSCOMBE DOWN']
 
 if __name__ == "__main__":
     sys.exit(main())
