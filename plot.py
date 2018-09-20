@@ -316,14 +316,40 @@ def plot_gauges_map(ds, id_dim, fig_name):
     plt.close()
 
 
+def hexbin(ds, var1, var2, fig_name):
+    x = ds[var1].values.flat
+    y = ds[var2].values.flat
+    xq = np.nanquantile(x, [0.01, 0.99])
+    yq = np.nanquantile(y, [0.01, 0.99])
+    xmin, xmax = xq[0], xq[1]
+    ymin, ymax = xq[0], xq[1]
+
+    fig, ax = plt.subplots(figsize=(4, 3))
+    # ax.axis([xmin, xmax, ymin, ymax])
+    hb = ax.hexbin(x, y, gridsize=20, extent=[xmin, xmax, ymin, ymax], mincnt=1)
+    ax.set_xlabel('$\eta(\mu)$')
+    ax.set_ylabel('$\eta(\sigma)$')
+    ax.plot([xmin, xmax], [ymin, ymax], color='k', linewidth=0.5)
+    norm = matplotlib.colors.Normalize(vmin=1000, vmax=12000)
+    cb = plt.colorbar(hb, spacing='uniform', orientation='vertical',
+                      label='# of cells', norm=norm, extend='both')
+    # cb.set_label('# of cells')
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.close()
+
+
 def main():
-    ds_era = xr.open_zarr(os.path.join(DATA_DIR, ANNUAL_FILE))
-    print(ds_era['Dcrit_5pct'])
-    print(ds_era[['ks_loaiciga', 'ks_moments']].load().quantile([0.95,0.99,0.999]))
+    # ds_era = xr.open_zarr(os.path.join(DATA_DIR, ANNUAL_FILE))
+    # print(ds_era)
+    # print(ds_era[['ks_loaiciga', 'ks_moments']].load().quantile([0.95,0.99,0.999]))
     # ds_ghcn = xr.open_dataset(GAUGES_FILE)
-    # ds_annual_midas = xr.open_dataset(MIDAS_ANNUAL_FILE)
+    ds_annual_midas = xr.open_dataset(MIDAS_ANNUAL_FILE)
     # ds_annual_hadisd = xr.open_dataset(HADISD_ANNUAL_FILE)
-    
+
+    # hexbin(ds_era, 'loc_lr_slope', 'scale_lr_slope',
+    #        'scaling_gradients_hexbin.png')
+
     # ds_annual_ghcn = xr.open_zarr(GAUGES_ANNUAL_FILE)
     # ds_era_multidaily = xr.open_zarr(os.path.join(DATA_DIR, ERA_MULTIDAILY_FILE))
     # print(ds_annual_gauges.load())
