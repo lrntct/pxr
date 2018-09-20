@@ -15,16 +15,18 @@ import scipy.stats
 import statsmodels.api as sm
 
 
-DATA_DIR = '../data/GHCN/'
-HOURLY_FILE = 'ghcn_2000-2012_precip.zarr'
-ANNUAL_FILE = 'ghcn_2000-2012_precip_annual_max.zarr'
-ANNUAL_FILE_RANK = 'ghcn_2000-2012_precip_ranked.zarr'
-ANNUAL_FILE_GUMBEL = 'ghcn_2000-2012_precip_gumbel.zarr'
-ANNUAL_FILE_GRADIENT = 'ghcn_2000-2012_precip_gradient.zarr'
-ANNUAL_FILE_SCALING = 'ghcn_2000-2012_precip_scaling.zarr'
+# DATA_DIR = '/home/lunet/gylc4/geodata/MIDAS/'
+DATA_DIR = '../data/MIDAS/'
+HOURLY_FILE = 'midas_precip_2000-2017_select.zarr'
+
+ANNUAL_FILE = 'midas_2000-2017_precip_annual_max.nc'
+# ANNUAL_FILE2 = 'era5_2013-2017_precip_annual_max.zarr'
+# ANNUAL_FILE_RANK = 'era5_2000-2012_precip_ranked.zarr'
+# ANNUAL_FILE_GUMBEL = 'midas_2000-2017_precip_gumbel.zarr'
+# ANNUAL_FILE_GRADIENT = 'midas_2000-2017_precip_gradient.zarr'
+ANNUAL_FILE_SCALING = 'midas_2000-2017_precip_scaling.nc'
 
 LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
-
 
 # Annual max from Rob
 KAMPALA_AMS = '/home/lunet/gylc4/Sync/papers/global rainfall freq analysis/data/rob_kampala.csv'
@@ -40,16 +42,17 @@ EXTRACT = dict(latitude=slice(0, -5),
                longitude=slice(0, 5))
 
 # Event durations in hours - has to be adjusted to temporal resolution for the moving window
-# DURATIONS = [i+1 for i in range(24)] + [i for i in range(24+6,48+6,6)] + [i*24 for i in [5,10,15]]
-# TEMP_RES = 1  # Temporal resolution in hours
-DURATIONS = [(i+1)*24 for i in range(15)]
-TEMP_RES = 24  # Temporal resolution in hours
+DURATIONS = [i+1 for i in range(24)] + [i for i in range(24+6,48+6,6)] + [i*24 for i in [5,10,15]]
+TEMP_RES = 1  # Temporal resolution in hours
+# DURATIONS = [(i+1)*24 for i in range(15)]
+# TEMP_RES = 24  # Temporal resolution in hours
 
 
 DTYPE = 'float32'
 
-HOURLY_CHUNKS = {'time': -1, 'latitude': 8, 'longitude': 8}
-ANNUAL_CHUNKS = {'year': -1, 'duration':10, 'latitude': 45*4, 'longitude': 45*4}  # 4 cells: 1 degree
+HOURLY_CHUNKS = {'time': -1, 'latitude': 16, 'longitude': 16}
+ANNUAL_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 45*4, 'longitude': 45*4}  # 4 cells: 1 degree
+GAUGES_CHUNKS = {'year': -1, 'duration':-1, 'station': 10}
 GEN_FLOAT_ENCODING = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
 ANNUAL_ENCODING = {'annual_max': GEN_FLOAT_ENCODING,
                    'duration': {'dtype': DTYPE},
@@ -57,7 +60,7 @@ ANNUAL_ENCODING = {'annual_max': GEN_FLOAT_ENCODING,
                    'longitude': {'dtype': DTYPE}}
 
 
-def step1_annual_maxs_of_roll_mean(ds, durations, temp_res):
+def step1_annual_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res):
     """for each rolling winfows size:
     compute the annual maximum of a moving mean
     return an array with the durations as a new dimension
@@ -65,9 +68,9 @@ def step1_annual_maxs_of_roll_mean(ds, durations, temp_res):
     annual_maxs = []
     for duration in durations:
         window_size = int(duration / temp_res)
-        precip = ds.precipitation
-        precip_roll_mean = precip.rolling(time=window_size).mean(dim='time')
-        annual_max = precip_roll_mean.groupby('time.year').max(dim='time')
+        precip = ds[precip_var]
+        precip_roll_mean = precip.rolling(**{time_dim:window_size}, min_periods=max(int(window_size*.9), 1)).mean(dim=time_dim, skipna=True)
+        annual_max = precip_roll_mean.groupby('{}.year'.format(time_dim)).max(dim=time_dim, skipna=True)
         annual_max.name = 'annual_max'
         da = annual_max.expand_dims('duration')
         da.coords['duration'] = [duration]
@@ -141,8 +144,7 @@ def double_log(arr):
 def step21_ranking(annual_maxs):
     """Rank the annual maxs in time, in ascending order
     NOTE: Loaiciga & Leipnik (1999) call for the ranking to be done in desc. order,
-    but this results in negative scale parameter, and wrong fitting
-
+    but this results in negative scale parameter, and wrong fitting.
     return a Dataset
     """
     asc_rank = annual_maxs.load().rank(dim='year')
@@ -151,9 +153,11 @@ def step21_ranking(annual_maxs):
     # Merge arrays
     return xr.merge([annual_maxs, ranks])
 
+
 def gumbel_cdf(x, loc, scale):
     z = (x - loc) / scale
     return np.e**(-np.e**-z)
+
 
 def step22_gumbel_fit_loaiciga1999(ds):
     """Follow the steps described in:
@@ -347,17 +351,24 @@ def main():
         # Load hourly data #
         # logger(['start computing annual maxima', str(start_time), 0])
         hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
-        hourly = xr.open_zarr(hourly_path)#.chunk(HOURLY_CHUNKS)
-        # hourly_extract = hourly.loc[EXTRACT]
-        # print(hourly)
+        hourly = xr.open_zarr(hourly_path)#.chunk(HOURLY_CHUNKS)#.loc[EXTRACT]
+        # hourly = xr.open_dataset(hourly_path)
+        print(hourly)
 
         # Get annual maxima #
-        annual_maxs = step1_annual_maxs_of_roll_mean(hourly, DURATIONS, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
-        # amax_path = os.path.join(DATA_DIR, ANNUAL_FILE)
-        # annual_maxs.to_dataset().to_zarr(amax_path, mode='w', encoding=ANNUAL_ENCODING)
+        annual_maxs = step1_annual_maxs_of_roll_mean(hourly, 'prcp_amt', 'end_time', DURATIONS, TEMP_RES).chunk(GAUGES_CHUNKS)
+        amax_path = os.path.join(DATA_DIR, ANNUAL_FILE)
+        # amax_path2 = os.path.join(DATA_DIR, ANNUAL_FILE2)
+        print(annual_maxs.load())
+        annual_maxs.to_dataset().to_netcdf(amax_path, mode='w')
 
         # logger(['start ranking annual maxima', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # annual_maxs = xr.open_zarr(amax_path)['annual_max']
+        # annual_maxs1 = set_attrs(xr.open_zarr(amax_path1))['annual_max']
+        # annual_maxs = xr.open_dataset(amax_path)['annual_max']
+        # print(annual_maxs.load())
+        # print(annual_maxs2)
+        # annual_maxs = xr.concat([annual_maxs1, annual_maxs2], dim='year').chunk(ANNUAL_CHUNKS)
+        # print(annual_maxs)
         # annual_maxs = amax_rob()  # to compare with Rob's values
 
         # Do the ranking
@@ -371,19 +382,19 @@ def main():
 
 
         # fit Gumbel #
-        # logger(['start iterative gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # ds_ranked = set_attrs(xr.open_zarr(rank_path))#.loc[EXTRACT]
-        ds_fitted = step22_gumbel_fit_loaiciga1999(ds_ranked)
-        # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
-        # ds_fitted = xr.open_zarr(gumbel_path)#.loc[EXTRACT]
         # logger(['start moments gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        ds_fitted = step2bis_gumbel_fit_moments(ds_fitted)
-        ds_fitted = step25_KS_test(ds_fitted)
+        ds_fitted = step2bis_gumbel_fit_moments(ds_ranked)
+        # logger(['start iterative gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        ds_fitted = step22_gumbel_fit_loaiciga1999(ds_fitted)#.chunk(ANNUAL_CHUNKS)
+        # ds_fitted = xr.open_zarr(gumbel_path).sel(duration=slice(24, 360))#.loc[EXTRACT]
+        # logger(['start KS test', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        ds_fitted = step25_KS_test(ds_fitted)#.chunk(ANNUAL_CHUNKS)
         # print(ds_fitted)
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # gumbel_path2 = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL+'2')
+        # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        # ds_fitted.to_zarr(gumbel_path2, mode='w', encoding=encoding)
+        # ds_fitted.to_zarr(gumbel_path, mode='w', encoding=encoding)
         # print(ds_fitted)
 
         # fit duration scaling #
@@ -396,12 +407,14 @@ def main():
         # ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(gradient_path, mode='w', encoding=encoding)
 
         # ds_fitted = xr.open_zarr(gradient_path)
-        # logger(["start pearson's r computation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # logger(["start correlation computation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         step4_scaling_correlation(ds_fitted)
-        # logger(["start writing pearson's r", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
+        # logger(["start writing correlation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_SCALING)
-        encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        ds_fitted.to_zarr(scaling_path, mode='w', encoding=encoding)
+        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
+        # ds_fitted.to_zarr(scaling_path, mode='w', encoding=encoding)
+        print(ds_fitted.load())
+        ds_fitted.to_netcdf(scaling_path)
         # print(ds_fitted.compute())
         # print((~np.isfinite(ds_fitted)).sum().compute())
         # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
