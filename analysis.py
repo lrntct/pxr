@@ -16,15 +16,15 @@ import statsmodels.api as sm
 
 
 # DATA_DIR = '/home/lunet/gylc4/geodata/MIDAS/'
-DATA_DIR = '../data/MIDAS/'
-HOURLY_FILE = 'midas_precip_2000-2017_select.zarr'
+DATA_DIR = '../data/GHCN/'
+HOURLY_FILE = 'ghcn2000-2017_select.zarr'
 
-ANNUAL_FILE = 'midas_2000-2017_precip_annual_max.nc'
+ANNUAL_FILE = 'ghcn_2000-2017_precip_annual_max.nc'
 # ANNUAL_FILE2 = 'era5_2013-2017_precip_annual_max.zarr'
 # ANNUAL_FILE_RANK = 'era5_2000-2012_precip_ranked.zarr'
 # ANNUAL_FILE_GUMBEL = 'midas_2000-2017_precip_gumbel.zarr'
 # ANNUAL_FILE_GRADIENT = 'midas_2000-2017_precip_gradient.zarr'
-ANNUAL_FILE_SCALING = 'midas_2000-2017_precip_scaling.nc'
+ANNUAL_FILE_SCALING = 'ghcn_2000-2017_precip_scaling.nc'
 
 LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
 
@@ -42,17 +42,17 @@ EXTRACT = dict(latitude=slice(0, -5),
                longitude=slice(0, 5))
 
 # Event durations in hours - has to be adjusted to temporal resolution for the moving window
-DURATIONS = [i+1 for i in range(24)] + [i for i in range(24+6,48+6,6)] + [i*24 for i in [5,10,15]]
-TEMP_RES = 1  # Temporal resolution in hours
-# DURATIONS = [(i+1)*24 for i in range(15)]
-# TEMP_RES = 24  # Temporal resolution in hours
+# DURATIONS = [i+1 for i in range(24)] + [i for i in range(24+6,48+6,6)] + [i*24 for i in [5,10,15]]
+# TEMP_RES = 1  # Temporal resolution in hours
+DURATIONS = [(i+1)*24 for i in range(15)]
+TEMP_RES = 24  # Temporal resolution in hours
 
 
 DTYPE = 'float32'
 
 HOURLY_CHUNKS = {'time': -1, 'latitude': 16, 'longitude': 16}
 ANNUAL_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 45*4, 'longitude': 45*4}  # 4 cells: 1 degree
-GAUGES_CHUNKS = {'year': -1, 'duration':-1, 'station': 10}
+GAUGES_CHUNKS = {'year': -1, 'duration':-1, 'station': 200}
 GEN_FLOAT_ENCODING = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
 ANNUAL_ENCODING = {'annual_max': GEN_FLOAT_ENCODING,
                    'duration': {'dtype': DTYPE},
@@ -356,7 +356,7 @@ def main():
         print(hourly)
 
         # Get annual maxima #
-        annual_maxs = step1_annual_maxs_of_roll_mean(hourly, 'prcp_amt', 'end_time', DURATIONS, TEMP_RES).chunk(GAUGES_CHUNKS)
+        annual_maxs = step1_annual_maxs_of_roll_mean(hourly, 'precipitation', 'time', DURATIONS, TEMP_RES).chunk(GAUGES_CHUNKS)
         amax_path = os.path.join(DATA_DIR, ANNUAL_FILE)
         # amax_path2 = os.path.join(DATA_DIR, ANNUAL_FILE2)
         print(annual_maxs.load())
@@ -413,7 +413,7 @@ def main():
         scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_SCALING)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         # ds_fitted.to_zarr(scaling_path, mode='w', encoding=encoding)
-        print(ds_fitted.load())
+        # print(ds_fitted.load())
         ds_fitted.to_netcdf(scaling_path)
         # print(ds_fitted.compute())
         # print((~np.isfinite(ds_fitted)).sum().compute())
