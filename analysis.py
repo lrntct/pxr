@@ -40,8 +40,8 @@ KISUMU_COORD = (0.1, 34.75)
 # Extract
 # EXTRACT = dict(latitude=slice(1.0, -0.25),
 #                longitude=slice(32.5, 35))
-EXTRACT = dict(latitude=slice(0, -2),
-               longitude=slice(0, 2))
+EXTRACT = dict(latitude=slice(0, -1),
+               longitude=slice(0, 1))
 
 # Event durations in hours - has to be adjusted to temporal resolution for the moving window
 # Selected to be equally spaced on a log scale. Manually adjusted from a call to np.geomspace()
@@ -307,7 +307,6 @@ def step3_scaling(ds):
     for dur_name, durations in DURATION_DICT.items():
         # Select only the durations of interest
         ds_sel = ds.sel(duration=durations)
-        print(ds_sel)
         da_list = []
         for g_param_name in ['location', 'scale']:
             param_col = 'log_{}'.format(g_param_name)
@@ -344,35 +343,48 @@ def step4_scaling_correlation(ds):
     Spearman's r
     ratio
     """
-    # x = ds['duration']**ds['loc_lr_slope']
-    # y = ds['duration']**ds['scale_lr_slope']
-    ds['scaling_pearsonr'] = xr.apply_ufunc(pearsonr,
-                                    ds['loc_loaiciga'], ds['scale_loaiciga'],
-                                    input_core_dims=[['duration'], ['duration']],
-                                    # output_core_dims=[[]],
-                                    vectorize=True,
-                                    dask='parallelized',
-                                    output_dtypes=[DTYPE]
-                                    )
-    ds['scaling_spearmanr'] = xr.apply_ufunc(spearmanr,
-                                    ds['loc_loaiciga'], ds['scale_loaiciga'],
-                                    input_core_dims=[['duration'], ['duration']],
-                                    # output_core_dims=[[]],
-                                    vectorize=True,
-                                    dask='parallelized',
-                                    output_dtypes=[DTYPE]
-                                    )
-    ds['scaling_ratio'] = ds['loc_lr_slope'] / ds['scale_lr_slope']
-    ttest_res = xr.apply_ufunc(ttest,
-                               ds['loc_loaiciga'], ds['scale_loaiciga'],
-                               input_core_dims=[['duration'], ['duration']],
-                               output_core_dims=[[], []],
-                               vectorize=True,
-                               dask='allowed',
-                               output_dtypes=[DTYPE, DTYPE]
-                               )
-    ds['scaling_ttest_stat'] = ttest_res[0]
-    ds['scaling_ttest_pvalue'] = ttest_res[1]
+    ds_list = []
+    for dur_name, durations in DURATION_DICT.items():
+        # Select only the durations of interest
+        ds_sel = ds.sel(duration=durations)
+        scaling_pearsonr = xr.apply_ufunc(pearsonr,
+                                        ds_sel['location'], ds_sel['scale'],
+                                        input_core_dims=[['duration'], ['duration']],
+                                        # output_core_dims=[[]],
+                                        vectorize=True,
+                                        dask='parallelized',
+                                        output_dtypes=[DTYPE]
+                                        ).rename('scaling_pearsonr')
+        scaling_spearmanr = xr.apply_ufunc(spearmanr,
+                                        ds_sel['location'], ds_sel['scale'],
+                                        input_core_dims=[['duration'], ['duration']],
+                                        # output_core_dims=[[]],
+                                        vectorize=True,
+                                        dask='parallelized',
+                                        output_dtypes=[DTYPE]
+                                        ).rename('scaling_spearmanr')
+        ttest_res = xr.apply_ufunc(ttest,
+                                ds_sel['location'], ds_sel['scale'],
+                                input_core_dims=[['duration'], ['duration']],
+                                output_core_dims=[[], []],
+                                vectorize=True,
+                                dask='allowed',
+                                output_dtypes=[DTYPE, DTYPE]
+                                )
+        scaling_student_t = ttest_res[0].rename('scaling_student_t')
+        scaling_student_pvalue = ttest_res[1].rename('scaling_student_pvalue')
+        # Group all DataArrays in a single dataset
+        ds_fit = xr.merge([scaling_pearsonr, scaling_spearmanr,
+                           scaling_student_t, scaling_student_pvalue])
+        # Keep the the results in their own dimension
+        ds_fit = ds_fit.expand_dims('scaling_extent')
+        ds_fit.coords['scaling_extent'] = [dur_name]
+        ds_list.append(ds_fit)
+    # Add the new Datasets to the general Dataset
+    ds = xr.merge([ds, ds_fit])
+    # In that case, the computation is automatically done per scaling extent
+    ds['scaling_ratio'] = ds['location_slope'] / ds['scale_slope']
+    return ds
 
 
 def set_attrs(ds):
@@ -496,7 +508,7 @@ def main():
         # ds_fitted = xr.open_zarr(gumbel_path)#.loc[EXTRACT]
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         ds_scaled = step3_scaling(ds_fitted)
-        print(ds_scaled.load())
+        # print(ds_scaled.load())
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
@@ -504,8 +516,9 @@ def main():
 
         # ds_fitted = xr.open_zarr(gradient_path)
         # logger(["start correlation computation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # step4_scaling_correlation(ds_fitted)
-        # print(ds_fitted.load())
+        ds_scaled = step4_scaling_correlation(ds_scaled)
+        print(ds_scaled.load())
+
         # logger(["start writing correlation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_SCALING)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
