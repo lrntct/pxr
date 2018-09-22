@@ -18,7 +18,8 @@ import statsmodels.api as sm
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
 # DATA_DIR = '../data/GHCN/'
-# HOURLY_FILE = 'ghcn2000-2017_select.zarr'
+HOURLY_FILE1 = 'era5_2000-2012_precip.zarr'
+HOURLY_FILE2 = 'era5_2013-2017_precip.zarr'
 
 # ANNUAL_FILE = 'ghcn_2000-2017_precip_annual_max.nc'
 # ANNUAL_FILE2 = 'era5_2013-2017_precip_annual_max.zarr'
@@ -39,14 +40,18 @@ KISUMU_COORD = (0.1, 34.75)
 # Extract
 # EXTRACT = dict(latitude=slice(1.0, -0.25),
 #                longitude=slice(32.5, 35))
-EXTRACT = dict(latitude=slice(0, -5),
-               longitude=slice(0, 5))
+EXTRACT = dict(latitude=slice(0, -2),
+               longitude=slice(0, 2))
 
 # Event durations in hours - has to be adjusted to temporal resolution for the moving window
-DURATIONS = [i+1 for i in range(24)] + [i for i in range(24+6,48+6,6)] + [i*24 for i in [5,10,15]]
-TEMP_RES = 1  # Temporal resolution in hours
-# DURATIONS = [(i+1)*24 for i in range(15)]
-# TEMP_RES = 24  # Temporal resolution in hours
+# Selected to be equally spaced on a log scale. Manually adjusted from a call to np.geomspace()
+DURATIONS_SUBDAILY = [1, 2, 3, 4, 6, 8, 10, 12, 18, 24]
+DURATIONS_DAILY = [24, 48, 72, 96, 120, 144, 192, 240, 288, 360]
+# use fromkeys to remove duplicate. need py >= 3.6 to preserve order
+DURATIONS_ALL = list(dict.fromkeys(DURATIONS_SUBDAILY + DURATIONS_DAILY))
+# Temporal resolution of the input in hours
+TEMP_RES = 1
+# TEMP_RES = 24
 
 
 DTYPE = 'float32'
@@ -77,16 +82,6 @@ def step1_annual_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res
         da.coords['duration'] = [duration]
         annual_maxs.append(da)
     return xr.concat(annual_maxs, 'duration')
-
-
-def slm_ols_wrapper(x, y):
-    """call statsmodels OLS and make it look like scipy linregress
-    ['slope', 'intercept', 'rsquared', 'pvalue', 'stderr']
-    """
-    X = sm.tools.tools.add_constant(x)
-    ols = slm.OLS(y, X, missing='drop')
-    results = ols.fit()
-    return results.params[1], results.params[0], results.rsquared, results.pvalues[0], results.bse[0]
 
 
 def linregress(func, ds, x, y, prefix, dims):
@@ -142,7 +137,7 @@ def double_log(arr):
     return (np.log(np.log(1/arr))).astype(DTYPE)
 
 
-def step21_ranking(annual_maxs):
+def rank_annual_maxs(annual_maxs):
     """Rank the annual maxs in time, in ascending order
     NOTE: Loaiciga & Leipnik (1999) call for the ranking to be done in desc. order,
     but this results in negative scale parameter, and wrong fitting.
@@ -151,7 +146,7 @@ def step21_ranking(annual_maxs):
     asc_rank = annual_maxs.load().rank(dim='year')
     # make sure that the resulting array is in the same order as the original
     ranks = asc_rank.rename('rank').astype(DTYPE).transpose(*annual_maxs.dims)
-    # Merge arrays
+    # Merge arrays in a single dataset
     return xr.merge([annual_maxs, ranks])
 
 
@@ -160,34 +155,31 @@ def gumbel_cdf(x, loc, scale):
     return np.e**(-np.e**-z)
 
 
-def step22_gumbel_fit_loaiciga1999(ds):
+def gumbel_fit_loaiciga1999(ds):
     """Follow the steps described in:
     Loaiciga, H. A., & Leipnik, R. B. (1999).
     Analysis of extreme hydrologic events with Gumbel distributions: marginal and additive cases.
     Stochastic Environmental Research and Risk Assessment (SERRA), 13(4), 251–259.
     https://doi.org/10.1007/s004770050042
     """
-    n_obs = ds.annual_max.count(dim='year')
-    # Estimate probability F{x} with the Weibull formula
-    ds['estim_prob'] = (ds['rank'] / (n_obs+1)).astype(DTYPE)
     # linearize
     ds['estim_prob_linear'] = double_log(ds['estim_prob'])
     # First fit
     linregress(scipy.stats.linregress, ds, 'annual_max', 'estim_prob_linear', 'estim_prob_lr', ['year'])
     # get provisional gumbel parameters
-    ds['loc_prov'] = -ds['estim_prob_lr_intercept']/ds['estim_prob_lr_slope']
-    ds['scale_prov'] = -1/ds['estim_prob_lr_slope']
+    loc_prov = -ds['estim_prob_lr_intercept']/ds['estim_prob_lr_slope']
+    scale_prov = -1/ds['estim_prob_lr_slope']
     # Analytic probability F(x) from Gumbel CDF
-    ds['analytic_prob'] = gumbel_cdf(ds['annual_max'], ds['loc_prov'], ds['scale_prov'])
+    ds['analytic_prob'] = gumbel_cdf(ds['annual_max'], loc_prov, scale_prov)
     # Get the final location and scale parameters
     ds['analytic_prob_linear'] = double_log(ds['analytic_prob'])
     linregress(scipy.stats.linregress, ds, 'annual_max', 'analytic_prob_linear', 'analytic_prob_lr', ['year'])
-    ds['loc_loaiciga'] = -ds['analytic_prob_lr_intercept']/ds['analytic_prob_lr_slope']
-    ds['scale_loaiciga'] = -1/ds['analytic_prob_lr_slope']
-    return ds
+    loc_final = (-ds['analytic_prob_lr_intercept']/ds['analytic_prob_lr_slope']).rename('location')
+    scale_final = -1/ds['analytic_prob_lr_slope'].rename('scale')
+    return loc_final, scale_final
 
 
-def step2bis_gumbel_fit_moments(ds):
+def gumbel_fit_moments(ds):
     """Fit Gumbel using the method of moments
     (Maidment 1993, cited by Bougadis & Adamowki 2006)
     """
@@ -195,30 +187,18 @@ def step2bis_gumbel_fit_moments(ds):
     magic_number2 = 0.7797
     mean = ds['annual_max'].mean(dim='year')
     std = ds['annual_max'].std(dim='year')
-    ds['loc_moments'] = mean - (magic_number1 * std)
-    ds['scale_moments'] = magic_number2 * std
-    return ds
+    loc = (mean - (magic_number1 * std)).rename('location')
+    scale = (magic_number2 * std).rename('scale')
+    return loc, scale
 
 
-def ks2samp(x, y):
-    return np.max(np.abs(x-y))
-
-
-def step25_KS_test(ds):
-    """Perform the Kolmogorov–Smirnov test for the performed Gumbel fitting
+def KS_test(ds):
+    """Perform the Kolmogorov–Smirnov test on the Gumbel fitting
     """
     ds = ds.chunk({'duration':-1})
-    ds['analytic_prob_loaiciga'] = gumbel_cdf(ds['annual_max'], ds['loc_loaiciga'], ds['scale_loaiciga'])
-    ds['ks_loaiciga'] = xr.apply_ufunc(ks2samp,
-                                    ds['estim_prob'], ds['analytic_prob_loaiciga'],
-                                    input_core_dims=[['year'], ['year']],
-                                    vectorize=True,
-                                    dask='parallelized',
-                                    output_dtypes=[DTYPE]
-                                    )
-    ds['analytic_prob_moments'] = gumbel_cdf(ds['annual_max'], ds['loc_moments'], ds['scale_moments'])
-    ds['ks_moments'] = xr.apply_ufunc(ks2samp,
-                                    ds['estim_prob'], ds['analytic_prob_moments'],
+    ds['analytic_prob'] = gumbel_cdf(ds['annual_max'], ds['location'], ds['scale'])
+    ds['ks'] = xr.apply_ufunc(lambda x,y: np.max(np.abs(x-y)),
+                                    ds['estim_prob'], ds['analytic_prob'],
                                     input_core_dims=[['year'], ['year']],
                                     vectorize=True,
                                     dask='parallelized',
@@ -227,6 +207,36 @@ def step25_KS_test(ds):
     # Dcrit at the 0.05 confidence
     len_dur = len(ds['duration'])
     ds['Dcrit_5pct'] = 1.36 * np.sqrt((len_dur+len_dur)/(len_dur*len_dur))
+    return ds
+
+
+def step2_fit_gumbel(da_annual_maxs):
+    """Fit gumbel using various techniques.
+    Keep them along a new dimension
+    """
+    n_obs = da_annual_maxs.count(dim='year')
+    # Add rank and turn to dataset
+    ds = rank_annual_maxs(da_annual_maxs)
+    # Estimate probability F{x} with the Weibull formula
+    ds['estim_prob'] = (ds['rank'] / (n_obs+1)).astype(DTYPE)
+    # Do the fitting
+    ds_list = []
+    for fit_func, name in [(gumbel_fit_moments, 'moments'),
+                           (gumbel_fit_loaiciga1999, 'iterative')
+                           ]:
+        ds_fit = xr.merge(fit_func(ds))
+        ds_fit = ds_fit.expand_dims('gumbel_fit')
+        ds_fit.coords['gumbel_fit'] = [name]
+        ds_list.append(ds_fit)
+    ds_fit = xr.concat(ds_list, dim='gumbel_fit')
+    # remove temporary variables
+    ds = ds.drop(['estim_prob_linear', 'estim_prob_lr_slope', 'estim_prob_lr_intercept',
+                  'estim_prob_lr_rvalue', 'estim_prob_lr_pvalue', 'estim_prob_lr_stderr',
+                  'analytic_prob', 'analytic_prob_linear', 'analytic_prob_lr_slope', 'analytic_prob_lr_intercept',
+                  'analytic_prob_lr_rvalue', 'analytic_prob_lr_pvalue', 'analytic_prob_lr_stderr',])
+    ds = xr.merge([ds, ds_fit])
+    # Perform the Kolmogorov-Smirniv test
+    ds = KS_test(ds)
     return ds
 
 
@@ -270,7 +280,7 @@ def logistic_regression(ds, x, y, prefix, dims):
 
 def step3_scaling(ds):
     """Take a Dataset as input containing the fitted gumbel parameters
-    Fit a linear regression on the log of the parameters and the log of the duration
+    Fit a linear and logistice functions on the log of the parameters and the log of the duration
     Keep the regression parameters as variables
     """
     # compute the log
@@ -411,13 +421,16 @@ def main():
         start_time = datetime.now()
         # Load hourly data #
         # logger(['start computing annual maxima', str(start_time), 0])
-        # hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
-        # hourly = xr.open_zarr(hourly_path)#.chunk(HOURLY_CHUNKS)#.loc[EXTRACT]
+        hourly_path1 = os.path.join(DATA_DIR, HOURLY_FILE1)
+        hourly_path2 = os.path.join(DATA_DIR, HOURLY_FILE2)
+        hourly1 = xr.open_zarr(hourly_path1)#.chunk(HOURLY_CHUNKS).loc[EXTRACT]
+        hourly2 = xr.open_zarr(hourly_path2)
+        hourly = set_attrs(xr.concat([hourly1, hourly2], dim='time')).chunk(HOURLY_CHUNKS).loc[EXTRACT]
         # hourly = xr.open_dataset(hourly_path)
-        # print(hourly)
+        print(hourly)
 
         # Get annual maxima #
-        # annual_maxs = step1_annual_maxs_of_roll_mean(hourly, 'precipitation', 'time', DURATIONS, TEMP_RES).chunk(GAUGES_CHUNKS)
+        annual_maxs = step1_annual_maxs_of_roll_mean(hourly, 'precipitation', 'time', DURATIONS_ALL, TEMP_RES).chunk(ANNUAL_CHUNKS)
         # amax_path = os.path.join(DATA_DIR, ANNUAL_FILE)
         # amax_path2 = os.path.join(DATA_DIR, ANNUAL_FILE2)
         # print(annual_maxs.load())
@@ -443,38 +456,39 @@ def main():
 
 
         # fit Gumbel #
+        ds_fitted = step2_fit_gumbel(annual_maxs)
         # ds_ranked = set_attrs(xr.open_zarr(rank_path))#.loc[EXTRACT]
         # logger(['start moments gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # ds_fitted = step2bis_gumbel_fit_moments(ds_ranked)
+        # ds_fitted = step2bis_gumbel_fit_moments(annual_maxs.to_dataset())
         # logger(['start iterative gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # ds_fitted = step22_gumbel_fit_loaiciga1999(ds_fitted)#.chunk(ANNUAL_CHUNKS)
         # ds_fitted = xr.open_zarr(gumbel_path).sel(duration=slice(24, 360))#.loc[EXTRACT]
         # logger(['start KS test', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # ds_fitted = step25_KS_test(ds_fitted)#.chunk(ANNUAL_CHUNKS)
-        # print(ds_fitted)
+        print(ds_fitted.load())
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
+        # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         # ds_fitted.to_zarr(gumbel_path, mode='w', encoding=encoding)
         # print(ds_fitted)
 
         # fit duration scaling #
-        ds_fitted = xr.open_zarr(gumbel_path)#.loc[EXTRACT]
+        # ds_fitted = xr.open_zarr(gumbel_path)#.loc[EXTRACT]
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        step3_scaling(ds_fitted)
+        # step3_scaling(ds_fitted)
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
-        encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(gradient_path, mode='w', encoding=encoding)
+        # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
+        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
+        # ds_fitted.chunk(ANNUAL_CHUNKS).to_zarr(gradient_path, mode='w', encoding=encoding)
 
         # ds_fitted = xr.open_zarr(gradient_path)
         # logger(["start correlation computation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        step4_scaling_correlation(ds_fitted)
-        print(ds_fitted.load())
+        # step4_scaling_correlation(ds_fitted)
+        # print(ds_fitted.load())
         # logger(["start writing correlation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_SCALING)
-        encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        ds_fitted.to_zarr(scaling_path, mode='w', encoding=encoding)
+        # scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_SCALING)
+        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
+        # ds_fitted.to_zarr(scaling_path, mode='w', encoding=encoding)
         # print(ds_fitted.load())
         # ds_fitted.to_netcdf(scaling_path)
         # print(ds_fitted.compute())
