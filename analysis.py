@@ -49,10 +49,14 @@ DURATIONS_SUBDAILY = [1, 2, 3, 4, 6, 8, 10, 12, 18, 24]
 DURATIONS_DAILY = [24, 48, 72, 96, 120, 144, 192, 240, 288, 360]
 # use fromkeys to remove duplicate. need py >= 3.6 to preserve order
 DURATIONS_ALL = list(dict.fromkeys(DURATIONS_SUBDAILY + DURATIONS_DAILY))
+DURATION_DICT = {'all': DURATIONS_ALL, 'daily': DURATIONS_DAILY, 'subdaily': DURATIONS_SUBDAILY}
 # Temporal resolution of the input in hours
 TEMP_RES = 1
 # TEMP_RES = 24
 
+
+LR_RES = ['slope', 'intercept', 'rvalue', 'pvalue', 'stderr']
+LOGISTIC_PARAMS = ['max', 'steepness', 'midpoint']
 
 DTYPE = 'float32'
 
@@ -66,46 +70,22 @@ ANNUAL_ENCODING = {'annual_max': GEN_FLOAT_ENCODING,
                    'longitude': {'dtype': DTYPE}}
 
 
-def step1_annual_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res):
-    """for each rolling winfows size:
-    compute the annual maximum of a moving mean
-    return an array with the durations as a new dimension
-    """
-    annual_maxs = []
-    for duration in durations:
-        window_size = int(duration / temp_res)
-        precip = ds[precip_var]
-        precip_roll_mean = precip.rolling(**{time_dim:window_size}, min_periods=max(int(window_size*.9), 1)).mean(dim=time_dim, skipna=True)
-        annual_max = precip_roll_mean.groupby('{}.year'.format(time_dim)).max(dim=time_dim, skipna=True)
-        annual_max.name = 'annual_max'
-        da = annual_max.expand_dims('duration')
-        da.coords['duration'] = [duration]
-        annual_maxs.append(da)
-    return xr.concat(annual_maxs, 'duration')
-
-
-def linregress(func, ds, x, y, prefix, dims):
-    """ds: xarray dataset
-    x, y: name of variables to use for the regression
-    prefix: to be added before the indivudual result names
+def linregress(func, x, y, dims):
+    """x, y: dataArray to use for the regression
     dims: dimension on which to carry out the regression
     """
-    lr_params = ['slope', 'intercept', 'rvalue', 'pvalue', 'stderr']
-    array_names = ['{}_{}'.format(prefix, n) for n in lr_params]
-
-    # faster without dask
-    ds.load()
     # return a tuple of DataArrays
-    res = xr.apply_ufunc(func, ds[x], ds[y],
+    res = xr.apply_ufunc(func, x, y,
             input_core_dims=[dims, dims],
-            output_core_dims=[[] for i in lr_params],
+            output_core_dims=[[] for i in LR_RES],
             vectorize=True,
-            # dask='allowed',
-            output_dtypes=[DTYPE for i in lr_params]
+            dask='allowed',
+            output_dtypes=[DTYPE for i in LR_RES]
             )
+    return res
     # add the data to the existing dataset
-    for arr_name, arr in zip(array_names, res):
-        ds[arr_name] = arr
+    # for arr_name, arr in zip(array_names, res):
+    #     ds[arr_name] = arr
 
 
 def nanlinregress(x, y):
@@ -163,19 +143,21 @@ def gumbel_fit_loaiciga1999(ds):
     https://doi.org/10.1007/s004770050042
     """
     # linearize
-    ds['estim_prob_linear'] = double_log(ds['estim_prob'])
-    # First fit
-    linregress(scipy.stats.linregress, ds, 'annual_max', 'estim_prob_linear', 'estim_prob_lr', ['year'])
+    estim_prob_linear = double_log(ds['estim_prob'])
+    # First fit. Keep only the two first returning DataArrays
+    estim_slope, estim_intercept = linregress(scipy.stats.linregress,
+                                              ds['annual_max'],
+                                              estim_prob_linear, ['year'])[:2]
     # get provisional gumbel parameters
-    loc_prov = -ds['estim_prob_lr_intercept']/ds['estim_prob_lr_slope']
-    scale_prov = -1/ds['estim_prob_lr_slope']
+    loc_prov = -estim_intercept / estim_slope
+    scale_prov = -1 / estim_slope
     # Analytic probability F(x) from Gumbel CDF
-    ds['analytic_prob'] = gumbel_cdf(ds['annual_max'], loc_prov, scale_prov)
+    analytic_prob = gumbel_cdf(ds['annual_max'], loc_prov, scale_prov)
     # Get the final location and scale parameters
-    ds['analytic_prob_linear'] = double_log(ds['analytic_prob'])
-    linregress(scipy.stats.linregress, ds, 'annual_max', 'analytic_prob_linear', 'analytic_prob_lr', ['year'])
-    loc_final = (-ds['analytic_prob_lr_intercept']/ds['analytic_prob_lr_slope']).rename('location')
-    scale_final = -1/ds['analytic_prob_lr_slope'].rename('scale')
+    analytic_prob_linear = double_log(analytic_prob)
+    analytic_slope, analytic_intercept = linregress(scipy.stats.linregress, ds['annual_max'], analytic_prob_linear, ['year'])[:2]
+    loc_final = (-analytic_intercept / analytic_slope).rename('location')
+    scale_final = (-1 / analytic_slope).rename('scale')
     return loc_final, scale_final
 
 
@@ -210,36 +192,6 @@ def KS_test(ds):
     return ds
 
 
-def step2_fit_gumbel(da_annual_maxs):
-    """Fit gumbel using various techniques.
-    Keep them along a new dimension
-    """
-    n_obs = da_annual_maxs.count(dim='year')
-    # Add rank and turn to dataset
-    ds = rank_annual_maxs(da_annual_maxs)
-    # Estimate probability F{x} with the Weibull formula
-    ds['estim_prob'] = (ds['rank'] / (n_obs+1)).astype(DTYPE)
-    # Do the fitting
-    ds_list = []
-    for fit_func, name in [(gumbel_fit_moments, 'moments'),
-                           (gumbel_fit_loaiciga1999, 'iterative')
-                           ]:
-        ds_fit = xr.merge(fit_func(ds))
-        ds_fit = ds_fit.expand_dims('gumbel_fit')
-        ds_fit.coords['gumbel_fit'] = [name]
-        ds_list.append(ds_fit)
-    ds_fit = xr.concat(ds_list, dim='gumbel_fit')
-    # remove temporary variables
-    ds = ds.drop(['estim_prob_linear', 'estim_prob_lr_slope', 'estim_prob_lr_intercept',
-                  'estim_prob_lr_rvalue', 'estim_prob_lr_pvalue', 'estim_prob_lr_stderr',
-                  'analytic_prob', 'analytic_prob_linear', 'analytic_prob_lr_slope', 'analytic_prob_lr_intercept',
-                  'analytic_prob_lr_rvalue', 'analytic_prob_lr_pvalue', 'analytic_prob_lr_stderr',])
-    ds = xr.merge([ds, ds_fit])
-    # Perform the Kolmogorov-Smirniv test
-    ds = KS_test(ds)
-    return ds
-
-
 def fit_logistic(x, y):
     """Fit a logitic funtion to the data using scipy
     """
@@ -260,41 +212,19 @@ def fit_logistic(x, y):
     return popt[0], popt[1], popt[2]
 
 
-def logistic_regression(ds, x, y, prefix, dims):
-    logistic_params = ['max', 'steepness', 'midpoint']
-    array_names = ['{}_{}'.format(prefix, n) for n in logistic_params]
-    # faster without dask
-    ds.load()
+def logistic_regression(x, y, dims):
     # return a tuple of DataArrays
-    res = xr.apply_ufunc(fit_logistic, ds[x], ds[y],
+    res = xr.apply_ufunc(fit_logistic, x, y,
                         input_core_dims=[dims, dims],
-                        output_core_dims=[[] for i in logistic_params],
+                        output_core_dims=[[] for i in LOGISTIC_PARAMS],
                         vectorize=True,
-                        # dask='allowed',
-                        output_dtypes=[DTYPE for i in logistic_params]
+                        dask='allowed',
+                        output_dtypes=[DTYPE for i in LOGISTIC_PARAMS]
                         )
     # add the data to the existing dataset
-    for arr_name, arr in zip(array_names, res):
-        ds[arr_name] = arr
-
-
-def step3_scaling(ds):
-    """Take a Dataset as input containing the fitted gumbel parameters
-    Fit a linear and logistice functions on the log of the parameters and the log of the duration
-    Keep the regression parameters as variables
-    """
-    # compute the log
-    var_list = ['duration', 'loc_loaiciga', 'scale_loaiciga']
-    logvar_list = ['log_duration', 'log_location', 'log_scale']
-    for var, log_var in zip(var_list, logvar_list):
-        ds[log_var] = np.log10(ds[var])
-    # Do the linear regression
-    linregress(nanlinregress, ds, 'log_duration', 'log_location', 'loc_lr', ['duration'])
-    linregress(nanlinregress, ds, 'log_duration', 'log_scale', 'scale_lr', ['duration'])
-
-    # Fit a logistic function
-    logistic_regression(ds, 'log_duration', 'log_location', 'loc_logistic', ['duration'])
-    logistic_regression(ds, 'log_duration', 'log_location', 'scale_logistic', ['duration'])
+    # for arr_name, arr in zip(array_names, res):
+    #     ds[arr_name] = arr
+    return res
 
 
 def pearsonr(x, y):
@@ -316,6 +246,96 @@ def ttest(x, y):
     return t-statistic and pvalue
     """
     return scipy.stats.ttest_ind(x, y, axis=0, nan_policy='omit')
+
+
+def step1_annual_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res):
+    """for each rolling winfows size:
+    compute the annual maximum of a moving mean
+    return an array with the durations as a new dimension
+    """
+    annual_maxs = []
+    for duration in durations:
+        window_size = int(duration / temp_res)
+        precip = ds[precip_var]
+        precip_roll_mean = precip.rolling(**{time_dim:window_size}, min_periods=max(int(window_size*.9), 1)).mean(dim=time_dim, skipna=True)
+        annual_max = precip_roll_mean.groupby('{}.year'.format(time_dim)).max(dim=time_dim, skipna=True)
+        annual_max.name = 'annual_max'
+        da = annual_max.expand_dims('duration')
+        da.coords['duration'] = [duration]
+        annual_maxs.append(da)
+    return xr.concat(annual_maxs, 'duration')
+
+
+def step2_fit_gumbel(da_annual_maxs):
+    """Fit gumbel using various techniques.
+    Keep them along a new dimension
+    """
+    n_obs = da_annual_maxs.count(dim='year')
+    # Add rank and turn to dataset
+    ds = rank_annual_maxs(da_annual_maxs)
+    # Estimate probability F{x} with the Weibull formula
+    ds['estim_prob'] = (ds['rank'] / (n_obs+1)).astype(DTYPE)
+    # Do the fitting
+    ds_list = []
+    for fit_func, name in [(gumbel_fit_moments, 'moments'),
+                           (gumbel_fit_loaiciga1999, 'iterative')
+                           ]:
+        ds_fit = xr.merge(fit_func(ds))
+        ds_fit = ds_fit.expand_dims('gumbel_fit')
+        ds_fit.coords['gumbel_fit'] = [name]
+        ds_list.append(ds_fit)
+    ds_fit = xr.concat(ds_list, dim='gumbel_fit')
+    ds = xr.merge([ds, ds_fit])
+    # Perform the Kolmogorov-Smirniv test
+    ds = KS_test(ds)
+    return ds
+
+
+def step3_scaling(ds):
+    """Take a Dataset as input containing the fitted gumbel parameters
+    Fit a linear and logistic functions on the log of the parameters and the log of the duration
+    Keep the regression parameters as variables
+    The fitting is done on various duration series kept as a new dimension
+    """
+    # compute the logarithm of the variables
+    var_list = ['duration', 'location', 'scale']
+    logvar_list = ['log_duration', 'log_location', 'log_scale']
+    for var, log_var in zip(var_list, logvar_list):
+        ds[log_var] = np.log10(ds[var])
+
+    ds_list = []
+    for dur_name, durations in DURATION_DICT.items():
+        # Select only the durations of interest
+        ds_sel = ds.sel(duration=durations)
+        print(ds_sel)
+        da_list = []
+        for g_param_name in ['location', 'scale']:
+            param_col = 'log_{}'.format(g_param_name)
+            # Do the linear regression. Keep only the two first results
+            slope, intercept = linregress(nanlinregress,
+                                          ds_sel['log_duration'], ds_sel[param_col],
+                                          ['duration'])[:2]
+            # Fit a logistic function
+            maximum, steepness, midpoint = logistic_regression(ds_sel['log_duration'],
+                                                               ds_sel[param_col],
+                                                               ['duration'])
+            # Name the resulting DataArrays
+            slope.name = '{}_slope'.format(g_param_name)
+            intercept.name = '{}_intercept'.format(g_param_name)
+            maximum.name = '{}_max'.format(g_param_name)
+            steepness.name = '{}_steepness'.format(g_param_name)
+            midpoint.name = '{}_midpoint'.format(g_param_name)
+            da_list.extend([slope, intercept, maximum, steepness, midpoint])
+        # Group all DataArrays in a single dataset
+        ds_fit = xr.merge(da_list)
+        # Keep the the results in their own dimension
+        ds_fit = ds_fit.expand_dims('scaling_extent')
+        ds_fit.coords['scaling_extent'] = [dur_name]
+        ds_list.append(ds_fit)
+    ds_fit = xr.concat(ds_list, dim='scaling_extent')
+    # Add thos DataArray to the general Dataset
+    ds = xr.merge([ds, ds_fit])
+    return ds
 
 
 def step4_scaling_correlation(ds):
@@ -465,7 +485,7 @@ def main():
         # ds_fitted = xr.open_zarr(gumbel_path).sel(duration=slice(24, 360))#.loc[EXTRACT]
         # logger(['start KS test', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # ds_fitted = step25_KS_test(ds_fitted)#.chunk(ANNUAL_CHUNKS)
-        print(ds_fitted.load())
+        # print(ds_fitted)
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
@@ -475,7 +495,8 @@ def main():
         # fit duration scaling #
         # ds_fitted = xr.open_zarr(gumbel_path)#.loc[EXTRACT]
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # step3_scaling(ds_fitted)
+        ds_scaled = step3_scaling(ds_fitted)
+        print(ds_scaled.load())
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
