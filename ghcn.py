@@ -9,6 +9,7 @@ import copy
 import numpy as np
 import pandas as pd
 import xarray as xr
+from dask.diagnostics import ProgressBar
 import pandas as pd
 import cartopy as ctpy
 import matplotlib.pyplot as plt
@@ -29,6 +30,10 @@ CHUNKS = {'time': -1, 'station': 500}
 
 GHCN_ALL = 'ghcn2000-2017.zarr'
 GHCN_SELECT = 'ghcn2000-2017_select.zarr'
+
+# Constants for bias detection
+WEEKDAY_STD_THRES = 0.1
+
 
 def ghcn_read_data(data_dir, df_stations_infos):
     # read all CSV in dir and put them in a list of DataFrame
@@ -111,23 +116,44 @@ def drop_stations(ds):
     return ds.loc[{'station':kept_station_int_id}]
 
 
-def main():
-    # df_stations_infos = pd.read_fwf(os.path.join(GHCN_DIR, STATION_FILE),
-    #                           names=COL_STATIONS, index_col='ID', header=None, colspecs=STATIONS_COLSPEC)
-    # ds = ghcn_read_data('/home/lunet/gylc4/geodata/GHCN/', df_stations_infos).chunk(CHUNKS)
-    # ds.reset_index('station').to_zarr(os.path.join(GHCN_DIR, GHCN_ALL), mode='w')
-    ds = xr.open_zarr(os.path.join(GHCN_DIR, GHCN_ALL)).chunk(CHUNKS).rename({'station_':'id'})#.isel(station=slice(0, 500))
-    print(ds)
-    # print(df_stations_infos.head())
-    # keep only stations with enough records
-    ds_select = drop_stations(ds)
-    print(ds_select.load())
-    ds_select.to_zarr(os.path.join(GHCN_DIR, GHCN_SELECT), mode='w')
+def bias_flag(ds):
+    """
+    """
+    # Day of the week bias
+    weekday_gb = ds['precipitation'].groupby('time.dayofweek')
+    ds['dayofweek_std'] = weekday_gb.mean(dim='time').std(dim='dayofweek')
+    ds['dayofweek_mean'] = weekday_gb.mean(dim='time').mean(dim='dayofweek')
+    # print(ds['dayofweek_std'].mean())
+    # print(ds['dayofweek_std'].min())
+    # print(ds['dayofweek_std'].max())
+    ds_sel = ds.where(ds['dayofweek_std'] < WEEKDAY_STD_THRES, drop=True)
+    return ds_sel
 
-    # print(np.isfinite(da).sum(dim='time'))
-    # da.plot()
-    # plt.savefig('ghcn_test.png')
-    # plt.close()
+
+def main():
+    with ProgressBar():
+        # df_stations_infos = pd.read_fwf(os.path.join(GHCN_DIR, STATION_FILE),
+        #                           names=COL_STATIONS, index_col='ID', header=None, colspecs=STATIONS_COLSPEC)
+        # ds = ghcn_read_data('/home/lunet/gylc4/geodata/GHCN/', df_stations_infos).chunk(CHUNKS)
+        # ds.reset_index('station').to_zarr(os.path.join(GHCN_DIR, GHCN_ALL), mode='w')
+        # ds = xr.open_zarr(os.path.join(GHCN_DIR, GHCN_ALL)).chunk(CHUNKS).rename({'station_':'id'})#.isel(station=slice(0, 500))
+        # print(ds)
+        # print(df_stations_infos.head())
+        # keep only stations with enough records
+        # ds_select = drop_stations(ds)
+        # print(ds_select.load())
+        # print()
+        # ds_select.to_zarr(os.path.join(GHCN_DIR, GHCN_SELECT), mode='w')
+
+        ds_select = xr.open_zarr(os.path.join(GHCN_DIR, GHCN_SELECT))
+        print(ds_select)
+        ds_select = bias_flag(ds_select.load())
+        print(ds_select)
+
+        # print(np.isfinite(da).sum(dim='time'))
+        # da.plot()
+        # plt.savefig('ghcn_test.png')
+        # plt.close()
 
 
 if __name__ == "__main__":
