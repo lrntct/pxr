@@ -30,10 +30,16 @@ CHUNKS = {'time': -1, 'station': 500}
 
 GHCN_ALL = 'ghcn2000-2017.zarr'
 GHCN_SELECT = 'ghcn2000-2017_select.zarr'
+GHCN_FILTERED = 'ghcn2000-2017_filtered.nc'
 
-# Constants for bias detection
+# Standard deviation threshold for weekday bias detection
 WEEKDAY_STD_THRES = 0.1
-
+# Underreporting bias threshold in inches (from Daly & Al. 2007), converted to mm/hour
+UNDERREP_IN = {'high': (1.52/24, 2.54/24), 'low': (0.25/24, 1.27/24)}
+# Equivalent for measurements in mm
+UNDERREP_MM = {'high': (1.1/24, 3/24), 'low': (0.1/24, 1./24)}
+# Underreporting bias threshold
+UNDERREP_THRES = 0.6
 
 def ghcn_read_data(data_dir, df_stations_infos):
     # read all CSV in dir and put them in a list of DataFrame
@@ -120,13 +126,27 @@ def bias_flag(ds):
     """
     """
     # Day of the week bias
-    weekday_gb = ds['precipitation'].groupby('time.dayofweek')
-    ds['dayofweek_std'] = weekday_gb.mean(dim='time').std(dim='dayofweek')
-    ds['dayofweek_mean'] = weekday_gb.mean(dim='time').mean(dim='dayofweek')
-    # print(ds['dayofweek_std'].mean())
-    # print(ds['dayofweek_std'].min())
-    # print(ds['dayofweek_std'].max())
-    ds_sel = ds.where(ds['dayofweek_std'] < WEEKDAY_STD_THRES, drop=True)
+    weekday_mean = ds['precipitation'].groupby('time.dayofweek').mean(dim='time')
+    ds['dayofweek_std'] = weekday_mean.std(dim='dayofweek')
+    # ds['dayofweek_mean'] = weekday_mean.mean(dim='dayofweek')
+
+    # Underreporting
+    for name, th in zip(['urep_bias_in', 'urep_bias_mm'], [UNDERREP_IN, UNDERREP_MM]):
+        # Select the values
+        l_indexer = np.less_equal(th['low'][0], ds['precipitation']) & np.less_equal(ds['precipitation'], th['low'][1])
+        h_indexer = np.less_equal(th['high'][0], ds['precipitation']) & np.less_equal(ds['precipitation'], th['high'][1])
+        # Count them
+        rept_lower = xr.where(l_indexer, True, False).sum(dim='time').astype(np.float32)
+        rept_higher = xr.where(h_indexer, True, False).sum(dim='time').astype(np.float32)
+        # Calculate the underreporting bias (Daly & Al. 2007)
+        ds[name] = np.divide(rept_higher, rept_lower, out=rept_higher.values, where=rept_lower.values>0)
+
+    # Select the station that pass the repporting bias tests
+    urep_indexer = np.logical_and(ds['urep_bias_in'] < UNDERREP_THRES,
+                                 ds['urep_bias_mm'] < UNDERREP_THRES)
+    sel_indexer = np.logical_and(ds['dayofweek_std'] < WEEKDAY_STD_THRES,
+                                urep_indexer)
+    ds_sel = ds.where(sel_indexer, drop=True)
     return ds_sel
 
 
@@ -146,9 +166,8 @@ def main():
         # ds_select.to_zarr(os.path.join(GHCN_DIR, GHCN_SELECT), mode='w')
 
         ds_select = xr.open_zarr(os.path.join(GHCN_DIR, GHCN_SELECT))
-        print(ds_select)
         ds_select = bias_flag(ds_select.load())
-        print(ds_select)
+        ds_select.to_netcdf(os.path.join(GHCN_DIR, GHCN_FILTERED))
 
         # print(np.isfinite(da).sum(dim='time'))
         # da.plot()
