@@ -6,7 +6,7 @@ import copy
 import tarfile
 import gzip
 import shutil
-from datetime import datetime, timedelta
+import datetime
 import multiprocessing as mp
 
 import requests
@@ -23,7 +23,11 @@ BASE_FILE = 'midas_rainhrly_{y}01-{y}12.txt'
 STATIONS_DIR = os.path.join(BASE_DIR, 'stations')
 STATIONS_LIST = os.path.join(BASE_DIR, 'src_id_list.xls')
 OUT_FILE = '/home/lunet/gylc4/geodata/MIDAS/midas_precip_1950-2017.zarr'
-SELECT_FILE = '../data/MIDAS/midas_precip_2000-2017_select2.zarr'
+SELECT_FILE = '../data/MIDAS/midas_2000-2017_precip_select.zarr'
+
+# https://www.metoffice.gov.uk/public/weather/climate-extremes/#?tab=climateExtremes
+UK_HOURLY_MAX = 92.0
+UK_DAILY_MAX = 279.0
 
 
 # http://artefacts.ceda.ac.uk/badc_datadocs/ukmo-midas/RH_Table.html
@@ -117,7 +121,8 @@ def select_stations(ds, ymin, ymax):
     # Keep only the years of interest
     ds_short = ds.sel(end_time=slice(str(ymin), str(ymax)))
     # Keep only the quality controlled data
-    ds_cc = ds_short.where(ds_short['version_num']==1)
+    # ds['qc'] = np.logical_or(ds_short['qc0'])
+    ds_cc = ds_short.where(~ds_short['qc0'] & ~ds_short['qc1'] & ~ds_short['qc3'])
     # Number of values per year
     da_year_count = ds_cc['prcp_amt'].groupby('end_time.year').count(dim='end_time')
     min_years = int(len(da_year_count['year']) * .9)
@@ -137,6 +142,66 @@ def select_stations(ds, ymin, ymax):
     return ds_sel
 
 
+def qc0(ds):
+    # Keep only the quality controlled data
+    ds['qc0'] = np.logical_or(np.not_equal(ds['version_num'], 1),
+                              ds['ob_hour_count']!=1)
+
+
+
+def qc1(ds):
+    """Exceed UK hour record by 20%
+    """
+    ds['qc1'] = np.isfinite(ds['prcp_amt'].where(ds['prcp_amt'] >= UK_HOURLY_MAX * 1.2))
+    # print(ds['qc1'].sum().load())
+    # print(ds['prcp_amt'].min().load())
+
+
+
+def qc3(ds):
+    """Exceed UK 24h record by 20%
+    """
+    # Aggregate on 24h
+    ds['prcp_daily'] = ds['prcp_amt'].rolling(end_time=24, min_periods=max(int(24*.9), 1)).sum(dim='end_time', skipna=True)
+    ds['qc3'] = xr.where(ds['prcp_daily'] >= UK_DAILY_MAX * 1.2, True, False)
+
+
+def qc4(ds):
+    """Hourly totals at 0900 hours exceeding 2 times the mean daily rainfall for that month
+    and preceded by 23h without rainfall
+    """
+    daily_mean_per_month = ds['prcp_daily'].groupby('end_time.month').mean(dim='end_time', skipna=True)
+    print(daily_mean_per_month)
+    prcp_0900 = ds['prcp_amt'].sel(end_time=datetime.time(9))
+    month = prcp_0900['end_time.month']
+    print(prcp_0900)
+    over_thres = xr.where(prcp_0900 >= 2*daily_mean_per_month[month], True, False)
+    print(over_thres.load())
+
+
+def qc5(ds):
+    """Three consecutive measurements at 0900 or 1200 hours following 23h without rainfall
+    """
+    pass
+
+
+def qc7(ds):
+    """Duplicate rainfall in consecutive hours that
+    exceed two times the mean daily rainfall for that month.
+    """
+    pass
+
+
+def quality_assessment(ds):
+    qc0(ds)
+    qc1(ds)
+    qc3(ds)
+    # qc4(ds)
+    # print(ds['qc0'].sum().load())
+    # print(ds['qc1'].sum().load())
+    # print(ds['qc3'].sum().load())
+    return ds
+
 def main():
     with ProgressBar():
         # print(df.head())
@@ -144,12 +209,15 @@ def main():
         # print(ds)
         # ds.to_zarr(OUT_FILE, mode='w')
         ds = xr.open_zarr(OUT_FILE)
-        print(ds)
+        ds = quality_assessment(ds)
         ds_sel = select_stations(ds, 2000, 2017).chunk(CHUNKS)
-        print(ds_sel.load())
-        # print(ds_sel)
-        # print(ds_sel['prcp_amt'])
-        # print(ds_sel.mean().compute())
+        # ds_loaded = ds_sel.load()
+        # print(ds)
+        print(ds_sel['prcp_amt'])
+        # print(ds_loaded['prcp_amt'].mean())
+        # print(ds_loaded['prcp_amt'].min())
+        # print(ds_loaded['prcp_amt'].max())
+        # print(ds_loaded['ob_hour_count'].max())
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_sel.data_vars.keys()}
         ds_sel.load().to_zarr(SELECT_FILE, mode='w')
 
