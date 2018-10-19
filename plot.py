@@ -6,6 +6,7 @@ import sys
 import os
 import datetime
 import math
+import itertools
 
 import numpy as np
 import xarray as xr
@@ -18,7 +19,7 @@ from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import matplotlib.pyplot as plt
 
 
-DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
+DATA_DIR = '../data'
 # HOURLY_FILE = 'era5_2000-2012_precip.zarr'
 ERA_ANNUAL_FILE = 'era5_2000-2017_precip_complete.zarr'
 # GAUGES_FILE = '../data/GHCN/ghcn.nc'
@@ -100,129 +101,161 @@ def multi_maps(ds, var_names, disp_names, value_name, fig_name, duration=24, sqr
     plt.close()
 
 
-def prepare_scaling_per_site(ds_era, ds_gauges, name_col, ds_era_multidaily=None):
-    """
-    """
-    # ORGANIZE DATA #
-    scaling_coeffs = ['location_line_intercept', 'location_line_slope',
-                      'scale_line_intercept', 'scale_line_slope',
-                      'scaling_pearsonr', 'scaling_spearmanr', 'scaling_ratio']
+def get_site_list(ds, name_col, use_only=None):
     # Set station coordinates to station name
-    ds_gauges.coords['station'] = ds_gauges[name_col]
+    ds.coords['station'] = ds[name_col]
 
-    # dict of coordinates. Used to select sites on ERA5 dataset
-    sites = {n:(lat,lon) for n, lat, lon in zip(ds_gauges[name_col].values,
-                                                ds_gauges['latitude'].values,
-                                                ds_gauges['longitude'].values)}
-    # print(sites)
-    # extract sites values from the ERA5 dataset as pandas dataframes
+    if not use_only:
+        use_only = ds_sel[name_col].values
+
+    sites = {}
+    for name, lat, lon in zip(ds_sel[name_col].values,
+                              ds_sel['latitude'].values,
+                              ds_sel['longitude'].values):
+        if name in use_only:
+            sites[name] = (lat, lon)
+    return sites
+
+
+def prepare_scaling_per_site(ds_dict, select_by=None, use_only=None):
+    """
+    """
+    scaling_coeffs = ['location_line_slope', 'scale_line_slope', 'scaling_ratio']
+
+    keep_vars = ['location', 'scale'] + scaling_coeffs
+    drop_coords = ['latitude', 'longitude', 'gumbel_fit', 'scaling_extent']
+    # for name, ds in ds_dict.items():
+    #     print(ds)
+
+    if select_by:
+        ds_sel_name = select_by[0]
+        name_col = select_by[1]
+        ds_sel = ds_dict[ds_sel_name]
+        # Set station coordinates to station name
+        ds_sel.coords['station'] = ds_sel[name_col]
+
+        # dict of coordinates. Used to select sites
+        sites = {n: (lat, lon) for n, lat, lon in zip(ds_sel[name_col].values,
+                                                      ds_sel['latitude'].values,
+                                                      ds_sel['longitude'].values)}
+        # Remove the DS used for selection from the dict
+        del ds_dict[ds_sel_name]
+
+        # Extract sites values from the datasets. combine all ds along a new 'source' dimension
+        ds_site_list = []
+        for site_name, site_coord in list(sites.items()):
+            # Do nothing if the stations are not kept
+            if use_only:
+                if site_name not in use_only:
+                    continue
+            # 
+            ds_site_sources = []
+            # Select site on the other DS
+            for ds_name, ds in ds_dict.items():
+                ds_extract = (ds.sel(latitude=site_coord[0],
+                                     longitude=site_coord[1],
+                                     method='nearest')
+                              .drop(drop_coords)
+                              [keep_vars])
+                ds_extract = ds_extract.expand_dims(['station','source'])
+                ds_extract.coords['station'] = [site_name]
+                ds_extract.coords['source'] = [ds_name]
+                ds_site_sources.append(ds_extract)
+            # Add selection ds
+            ds_sel_extract = (ds_sel
+                            .sel(station=site_name)
+                            .drop(drop_coords + [name_col])
+                            [keep_vars])
+            ds_sel_extract.coords['station'] = [site_name]
+            ds_sel_extract.coords['source'] = [ds_sel_name]
+            # print(ds_sel_extract)
+            ds_site_sources.append(ds_sel_extract)
+            # Concatenate all sites along the source dimension
+            ds_all_sources = xr.concat(ds_site_sources, dim='source')
+            # print(ds_all_sources)
+            ds_site_list.append(ds_all_sources)
+
+        # Concat all along the 'station' dimension
+        ds_all = xr.concat(ds_site_list, dim='station')
+
+    else:
+        pass
+
+    # Calculate regression lines
+    for p in ['location', 'scale']:
+        ref_D = 24
+        ref_param = ds_all[p].sel(duration=ref_D)
+        dur = ds_all['duration']
+        slope = ds_all['{}_line_slope'.format(p)]
+        linereg_var = '{}_lr'.format(p)
+        ds_all[linereg_var] = ref_param * (dur/ref_D)**slope
+    # print(ds_all)
+
+    # Create a dict of Pandas DF {'site': DF} with the df col prefixed with the source
     dict_df = {}
-    dict_scaling_coeffs = {}
-    for site_name, site_coord in list(sites.items()):
-        # print(site_name)
-        # Stations to use:
-        if site_name not in [b'BRIZE NORTON', b'LITTLE RISSINGTON',
-                             b'LARKHILL', b'BOSCOMBE DOWN']:
-            continue
-        print(site_name)
-        ds_era_sel = (ds_era.sel(latitude=site_coord[0],
-                           longitude=site_coord[1],
-                           method='nearest')
-                      .drop(['latitude', 'longitude']))
-        df_era = ds_era_sel[['location', 'scale']].to_dataframe()
-        df_era.rename(columns={'location': 'era_loc',
-                               'scale': 'era_scale'},
-                      inplace=True)
-        if ds_era_multidaily:
-            ds_era_multidaily_sel = (ds_era_multidaily
-                                    .sel(latitude=site_coord[0],
-                                        longitude=site_coord[1],
-                                        method='nearest')
-                                    .drop(['latitude', 'longitude']))
-            era_m_scaling_coeffs = ds_era_multidaily_sel[scaling_coeffs].to_array(name='ERA5_MULTIDAILY').to_series()
-
-        ds_gauges_sel = ds_gauges[['location', 'scale']]
-        df_gauges = ds_gauges_sel.sel(station=site_name).to_dataframe()
-        df_gauges.rename(columns={'location': 'gauges_loc',
-                                  'scale': 'gauges_scale'},
-                         inplace=True)
-        for c in ['latitude', 'longitude', name_col, 'station', 'code']:
-            try:
-                df_gauges.drop([c], axis=1, inplace=True)
-            except KeyError:
-                pass
-
-        dict_df[site_name] = pd.concat([df_era, df_gauges], axis=1, sort=False)
-
-        era_scaling_coeffs = ds_era_sel[scaling_coeffs].to_array(name='ERA5').to_series()
-        # print(era_scaling_coeffs)
-        gauges_scaling_coeff = (ds_gauges
-                                .sel(station=site_name)[scaling_coeffs]
-                                .to_array(name='gauges')
-                                .to_series())
-        for c in ['station', name_col, 'code', 'latitude', 'longitude']:
-            try:
-                gauges_scaling_coeff.drop([c], inplace=True)
-            except KeyError:
-                pass
-        # print(gauges_scaling_coeff)
-        if ds_era_multidaily:
-            dict_scaling_coeffs[site_name] = pd.concat([era_scaling_coeffs,
-                                                        era_m_scaling_coeffs,
-                                                        gauges_scaling_coeff],
-                                                    axis=1, sort=False)
-        else:
-            dict_scaling_coeffs[site_name] = pd.concat([era_scaling_coeffs,
-                                                        gauges_scaling_coeff],
-                                                    axis=1, sort=False)
-    return dict_df, dict_scaling_coeffs
+    for station in ds_all['station'].values:
+        df_list = []
+        for source in ds_all['source'].values:
+            ds_extract = ds_all.sel(station=station,
+                                    source=source)
+            df = ds_extract.to_dataframe()
+            drop_list = ['station', 'source',
+                         'location_line_slope', 'scale_line_slope',
+                         'scaling_ratio']
+            df.drop(drop_list, axis=1, inplace=True)
+            rename_rules = {'location': '{}_location'.format(source),
+                            'scale': '{}_scale'.format(source),
+                            'location_lr': '{}_location_lr'.format(source),
+                            'scale_lr': '{}_scale_lr'.format(source), }
+            df.rename(columns=rename_rules, inplace=True)
+            df_list.append(df)
+        df_all = pd.concat(df_list, axis=1, sort=False)
+        dict_df[station] =  df_all
+    return dict_df
 
 
-def plot_scaling_per_site(dict_df, dict_scaling_coeffs, fig_name):
+def plot_scaling_per_site(dict_df, fig_name):
     """
     """
+    # linestyles = {
+    #     'location': [
+    #         dict(linestyle='None', linewidth=0, marker='v', markersize=3,
+    #              color=C_PRIMARY_1, label='Location $\mu$ ({})'),
+    #         dict(linestyle='None', linewidth=0, marker='o', markersize=2,
+    #              color=C_SECONDARY_1, label='Location $\mu$ ({})')
+    #     ],
+    #     'location_lr': [
+    #         dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0,
+    #              color=C_PRIMARY_1, label='$\mu_D (d/D)^\\alpha$ ({})'),
+    #         dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
+    #              color=C_SECONDARY_1, label='$\mu_D (d/D)^\\alpha$ ({})')
+    #     ],
+    #     'scale': [
+    #         dict(linestyle='None', linewidth=0, marker='v', markersize=3,
+    #              color=C_PRIMARY_2, label='Scale $\sigma$ ({})'),
+    #         dict(linestyle='None', linewidth=0, marker='o', markersize=2,
+    #              color=C_SECONDARY_2, label='Scale $\sigma$ ({})')
+    #     ],
+    #     'scale_lr': [
+
+    #     ]
+    #              }
+    linesyles = {
+        'MIDAS_location': dict(linestyle='None', linewidth=0, marker='v', markersize=3, color=C_PRIMARY_1, label='Location $\mu$ (MIDAS)'),
+        'MIDAS_location_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0, color=C_PRIMARY_1, label='$\mu_D (d/D)^\\alpha$ (MIDAS)'),
+        'MIDAS_scale': dict(linestyle='None', linewidth=0, marker='v', markersize=3, color=C_PRIMARY_2, label='Scale $\sigma$ (MIDAS)'),
+        'MIDAS_scale_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0, color=C_PRIMARY_2, label='$\sigma_D (d/D)^\\beta$ (MIDAS)'),
+        'ERA5_location': dict(linestyle='None', linewidth=0, marker='o', markersize=2, color=C_SECONDARY_1, label='Location $\mu$ (ERA5)'),
+        'ERA5_location_lr': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0, color=C_SECONDARY_1, label='$\mu_D (d/D)^\\alpha$ (ERA5)'),
+        'ERA5_scale': dict(linestyle='None', linewidth=0, marker='o', markersize=2, color=C_SECONDARY_2, label='Scale $\sigma$ (ERA5)'),
+        'ERA5_scale_lr': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0, color=C_SECONDARY_2, label='$\sigma_D (d/D)^\\beta$ (ERA5)'),
+                }
+
     col_num = 2
     row_num = math.ceil(len(dict_df)/2)
     fig, axes = plt.subplots(row_num, col_num, sharey=True, sharex=True, figsize=(4*col_num,3*row_num))
     for (site_name, df), ax in zip(dict_df.items(), axes.flat):
-        # print(site_name)
-        # calculate regression lines
-        df_scaling_coeffs = dict_scaling_coeffs[site_name]
-        for p in ['location', 'scale']:
-            inter_row = '{}_line_intercept'.format(p)
-            slope_row = '{}_line_slope'.format(p)
-            max_row = '{}_logistic_max'.format(p)
-            steepness_row = '{}_logistic_steepness'.format(p)
-            midpoint_row = '{}_logistic_midpoint'.format(p)
-            for source in ['ERA5', 'ERA5_MULTIDAILY', 'gauges']:
-                try:
-                    # linear regression
-                    intercept = df_scaling_coeffs.loc[inter_row, source]
-                    slope = df_scaling_coeffs.loc[slope_row, source]
-                    linereg_col = '{}_{}_lr'.format(source, p)
-                    print(intercept, slope, linereg_col)
-                    df[linereg_col] = 10**intercept * df.index**slope
-                    # logistic regression
-                    mv = df_scaling_coeffs.loc[max_row, source]
-                    s = df_scaling_coeffs.loc[steepness_row, source]
-                    mp = df_scaling_coeffs.loc[midpoint_row, source]
-                    logisticreg_col = '{}_{}_logreg'.format(source, p)
-                    df[logisticreg_col] = 10**(mv / (1 + np.exp(-(s)*((np.log10(x))-(mp)))))
-                except KeyError:
-                    continue
         # plot
-        linesyles = {
-            'era_loc': dict(linestyle='None', linewidth=0, marker='o', markersize=2, color=C_SECONDARY_1, label='Location $\mu$ (ERA5)'),
-            'ERA5_location_lr': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0, color=C_SECONDARY_1, label='$d^{\eta(\mu)}$ (ERA5)'),
-            'era_scale': dict(linestyle='None', linewidth=0, marker='o', markersize=2, color=C_SECONDARY_2, label='Scale $\sigma$ (ERA5)'),
-            'ERA5_scale_lr': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0, color=C_SECONDARY_2, label='$d^{\eta(\sigma)}$ (ERA5)'),
-            # 'ERA5_MULTIDAILY_loc_lr': dict(linestyle='dotted', linewidth=1., marker=None, markersize=0, color=c1a, label='$d^{\eta(\mu)}$ (ERA5 daily)'),
-            # 'ERA5_MULTIDAILY_scale_lr': dict(linestyle='dotted', linewidth=1., marker=None, markersize=0, color=c2a, label='$d^{\eta(\sigma)}$ (ERA5 daily)'),
-            'gauges_loc': dict(linestyle='None', linewidth=0, marker='v', markersize=3, color=C_PRIMARY_1, label='Location $\mu$ (gauges)'),
-            'gauges_location_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0, color=C_PRIMARY_1, label='$d^{\eta(\mu)}$ (gauges)'),
-            'gauges_scale': dict(linestyle='None', linewidth=0, marker='v', markersize=3, color=C_PRIMARY_2, label='Scale $\sigma$ (gauges)'),
-            'gauges_scale_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0, color=C_PRIMARY_2, label='$d^{\eta(\sigma)}$ (gauges)')
-                    }
         for col, styles in linesyles.items():
             try:
                 df[col].plot(loglog=True, title=site_name.decode("utf-8"), ax=ax, label=styles['label'],
@@ -366,7 +399,7 @@ def plot_gauges_map(ds, id_dim, fig_name, global_extent=True):
     plt.close()
 
 
-def hexbin(ds, var1, var2, fig_name):
+def hexbin(ds, var1, var2, xlabel, ylabel, fig_name):
     x = ds[var1].values.flat
     y = ds[var2].values.flat
     xq = np.nanquantile(x, [0.01, 0.99])
@@ -378,8 +411,8 @@ def hexbin(ds, var1, var2, fig_name):
     # ax.axis([xmin, xmax, ymin, ymax])
     hb = ax.hexbin(x, y, gridsize=20, extent=[xmin, xmax, ymin, ymax],
                    mincnt=1, bins=None)
-    ax.set_xlabel('$\eta(\mu)$')
-    ax.set_ylabel('$\eta(\sigma)$')
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
     ax.plot([xmin, xmax], [ymin, ymax], color='k', linewidth=0.5)
     norm = matplotlib.colors.Normalize(vmin=1000, vmax=12000)
     cb = plt.colorbar(hb, spacing='uniform', orientation='vertical',
@@ -494,6 +527,7 @@ def plot_scaling_differences(fig_name, quantiles, **kwargs):
     kwargs: a dict of 'source': (ds, dim)
     """
     param_symbols = {'location': '\mu', 'scale': '\sigma'}
+    gradient_symbols = {'location': '\\alpha', 'scale': '\\beta'}
     df_dict = {}
     for param in param_symbols.keys():
         # Actual values of the regression lines
@@ -538,7 +572,8 @@ def plot_scaling_differences(fig_name, quantiles, **kwargs):
         ax.set_xticks(XTICKS)
         ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
         ax.set_xlabel('$d$ (hours)')
-        ylabel = '$\log_{{10}}( d^{{\eta_{s}}} / {s} )$'.format(s=param_symbols[param])
+        ylabel = '$\log_{{10}}( d^{g} / {p} )$'.format(g=gradient_symbols[param],
+                                                       p=param_symbols[param])
         ax.set_ylabel(ylabel)
 
     # add a big axes, hide frame
@@ -562,26 +597,28 @@ def plot_scaling_differences(fig_name, quantiles, **kwargs):
 def fig_scaling_ratio_map(ds):
     scaling_ratio = ds['scaling_ratio'].sel(scaling_extent=b'all')
     # print(scaling_ratio)
-    new_lat = scaling_ratio['latitude'].values[::4*2]
-    new_long = scaling_ratio['longitude'].values[::4*2]
+    new_lat = scaling_ratio['latitude'].values[::1]
+    new_long = scaling_ratio['longitude'].values[::1]
     # print(new_long)
     resamp = scaling_ratio.dropna('latitude').dropna('longitude').load().interp(latitude=new_lat, longitude=new_long)
     # print(resamp)
     single_map(resamp,
                title="",
-               cbar_label='$\eta(\mu) / \eta(\sigma)$',
+               cbar_label='$\\alpha / \\beta$',
                center=1.0,
-               fig_name='scaling_ratio2000-2017_resamp2.png')
+               fig_name='scaling_ratio2000-2017.png')
 
 
 def fig_scaling_gradients_maps(ds):
     multi_maps(ds.sel(scaling_extent=b'daily'), ['location_line_slope', 'scale_line_slope'],
                ['Location-duration scaling', 'Scale-duration scaling'],
-               "$\eta$", 'scaling_gradients_2000-2017.png', sqr=False)
+               "$\\alpha, \\beta$", 'scaling_gradients_2000-2017_superdaily.png', sqr=False)
 
 
 def fig_scaling_hexbin(ds):
-    hexbin(ds.sel(scaling_extent=b'all'), 'location_line_slope', 'scale_line_slope',
+    hexbin(ds.sel(scaling_extent=b'all'),
+           'location_line_slope', 'scale_line_slope',
+           '$\\alpha$', '$\\beta$',
            'scaling_gradients_hexbin.png')
 
 
@@ -595,11 +632,19 @@ def table_count_noscalingfit(ds):
     print(num_null.load())
 
 
+def station_permut(ds):
+    stations = ds['station'].values
+    combinations = list(itertools.combinations(stations, 2))
+    print(combinations[:100])
+    print(len(combinations))
+
+
 def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_ANNUAL_FILE)).sel(gumbel_fit=b'scipy')
     ds_midas = xr.open_dataset(MIDAS_ANNUAL_FILE).sel(gumbel_fit='scipy')
     # print(ds_era)
     # print(ds_midas)
+    # station_permut(ds_midas)
 
 
     # fig_map_anderson(ds_era)
@@ -612,8 +657,8 @@ def main():
     # table_r_sigcount(ds_era, 0.05, dim=['longitude', 'latitude'])
     # table_r_sigcount(ds_era, 0.01, dim=['longitude', 'latitude'])
     # fig_scaling_gradients_maps(ds_era)
-    fig_scaling_differences_era(ds_era)
-    fig_scaling_differences_midas(ds_era, ds_midas)
+    # fig_scaling_differences_era(ds_era)
+    # fig_scaling_differences_midas(ds_era, ds_midas)
     # fig_maps_r(ds_era)
     # fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)
@@ -630,7 +675,6 @@ def main():
 
 
     # ds_annual_ghcn = xr.open_zarr(GAUGES_ANNUAL_FILE)
-    # ds_era_multidaily = xr.open_zarr(os.path.join(DATA_DIR, ERA_MULTIDAILY_FILE))
     # print(ds_annual_gauges.load())
     # print(ds_annual_midas.load())
     # plot_gauges_map(ds_annual_midas, 'src_name', 'midas_gauges_map.pdf', global_extent=False)
@@ -639,9 +683,14 @@ def main():
 
     # print((~np.isfinite(ds)).sum().compute())
     # plot_gumbel_per_site(ds_era, STUDY_SITES, 'sites_gumbel.png')
-    # dict_df, dict_scaling_coeffs = prepare_scaling_per_site(ds_era, ds_annual_ghcn, ds_era_multidaily)
-    # dict_df, dict_scaling_coeffs = prepare_scaling_per_site(ds_era, ds_annual_midas, 'src_name')
-    # plot_scaling_per_site(dict_df, dict_scaling_coeffs, 'sites_scaling_midas_select_2000-2017.pdf')
+    use_stations = [b'BRIZE NORTON', b'LITTLE RISSINGTON',
+                    b'LARKHILL', b'BOSCOMBE DOWN']
+    dict_ds = {'ERA5': ds_era.sel(scaling_extent=b'daily'),
+               'MIDAS': ds_midas.sel(scaling_extent='daily')}
+    dict_df = prepare_scaling_per_site(dict_ds,
+                                       select_by=('MIDAS', 'src_name'),
+                                       use_only=use_stations)
+    plot_scaling_per_site(dict_df, 'sites_scaling_midas_select_2000-2017_test.pdf')
 
     # single_map(ds_era['scaling_pearsonr'],
     #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
