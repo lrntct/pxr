@@ -136,25 +136,26 @@ def prepare_scaling_per_site(site_list, ds_cont=None, ds_points=None):
         # Select site on continous ds
         if ds_cont:
             for ds_name, ds in ds_cont.items():
-                ds_extract = (ds.sel(latitude=site_coord[0],
+                ds_cont_extract = (ds.sel(latitude=site_coord[0],
                                     longitude=site_coord[1],
                                     method='nearest')
                                 .drop(drop_coords)
                                 [keep_vars])
-                ds_extract = ds_extract.expand_dims(['station','source'])
-                ds_extract.coords['station'] = [site_name]
-                ds_extract.coords['source'] = [ds_name]
-                ds_site_sources.append(ds_extract)
+                ds_cont_extract = ds_cont_extract.load().expand_dims(['station','source'])
+                ds_cont_extract.coords['station'] = [site_name]
+                ds_cont_extract.coords['source'] = [ds_name]
+                ds_site_sources.append(ds_cont_extract)
         # Add point ds
         if ds_points:
             for ds_name, (ds, name_col) in ds_points.items():
                 ds.coords['station'] = ds[name_col]
-                ds_extract = (ds.sel(station=site_name)
-                            .drop(drop_coords + [name_col])
-                            [keep_vars])
-                ds_extract.coords['station'] = [site_name]
-                ds_extract.coords['source'] = [ds_name]
-                ds_site_sources.append(ds_extract)
+                ds_pt_extract = (ds.sel(station=site_name)
+                                 .load()
+                                 .drop(drop_coords + [name_col])
+                                 [keep_vars])
+                ds_pt_extract.coords['station'] = [site_name]
+                ds_pt_extract.coords['source'] = [ds_name]
+                ds_site_sources.append(ds_pt_extract)
         # Concatenate all sites along the source dimension
         ds_all_sources = xr.concat(ds_site_sources, dim='source')
         # print(ds_all_sources)
@@ -178,9 +179,7 @@ def prepare_scaling_per_site(site_list, ds_cont=None, ds_points=None):
     for station in ds_all['station'].values:
         df_list = []
         for source in ds_all['source'].values:
-            ds_extract = ds_all.sel(station=station,
-                                    source=source)
-            print(ds_extract)
+            ds_extract = ds_all.sel(station=station, source=source).load()
             df = ds_extract.to_dataframe()
             drop_list = ['station', 'source',
                          'location_line_slope', 'scale_line_slope',
@@ -222,12 +221,17 @@ def plot_scaling_per_site(dict_df, fig_name):
 
     col_num = 2
     row_num = math.ceil(len(dict_df)/2)
-    fig, axes = plt.subplots(row_num, col_num, sharey=True, sharex=True, figsize=(4*col_num,3*row_num))
+    fig_size = (4*col_num, 2.5*row_num)
+    fig, axes = plt.subplots(row_num, col_num, sharey=True, sharex=True, figsize=fig_size)
     for (site_name, df), ax in zip(dict_df.items(), axes.flat):
+        print(site_name)
         # plot
         for col, styles in linesyles.items():
             try:
-                df[col].plot(loglog=True, title=site_name.decode("utf-8"), ax=ax, label=styles['label'],
+                df[col].plot(ax=ax, label=styles['label'],
+                        # title=site_name.decode("utf-8"),
+                        title=site_name,
+                        loglog=True,
                         linestyle=styles['linestyle'], linewidth=styles['linewidth'],
                         markersize=styles['markersize'],
                         marker=styles['marker'], color=styles['color'])
@@ -265,7 +269,7 @@ def plot_scaling_per_site(dict_df, fig_name):
     # plt.legend(lines, labels, loc='lower center', ncol=4)
     lgd = fig.legend(lines, labels, loc='lower center', ncol=4)
     plt.tight_layout()
-    plt.subplots_adjust(bottom=.2, wspace=None, hspace=None)
+    plt.subplots_adjust(bottom=.1, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
     plt.close()
 
