@@ -37,7 +37,8 @@ EXTRACT = dict(latitude=slice(45, -45),
 STUDY_SITES = {'Jakarta': (-6.2, 106.816), 'Sydney': (33.865, 151.209),
                'Beijing': (39.92, 116.38), 'New Delhi': (28.614, 77.21),
                'Nairobi': (-1.28, 36.82), 'Brussels': (50.85, 4.35),
-               'Santiago': (-33.45, -70.67), 'New York City': (40.72, -74.0)
+               'Santiago': (-33.45, -70.67), 'New York City': (40.72, -74.0),
+               'Mexico City': (19.43, -99.13)
                }
 
 XTICKS = [1, 3, 6, 12, 24, 48, 120, 360]
@@ -125,9 +126,11 @@ def prepare_scaling_per_site(site_list, ds_cont=None, ds_points=None):
     if not ds_cont and not ds_cont:
         raise ValueError('No Dataset provided')
 
-    scaling_coeffs = ['location_line_slope', 'scale_line_slope', 'scaling_ratio']
+    scaling_coeffs = ['location_line_slope', 'scale_line_slope',
+                      'location_line_intercept', 'scale_line_intercept',
+                      'scaling_ratio']
     keep_vars = ['location', 'scale'] + scaling_coeffs
-    drop_coords = ['latitude', 'longitude', 'gumbel_fit', 'scaling_extent']
+    drop_coords = ['latitude', 'longitude', 'gumbel_fit']
 
     # Extract sites values from the datasets. combine all ds along a new 'source' dimension
     ds_site_list = []
@@ -137,10 +140,10 @@ def prepare_scaling_per_site(site_list, ds_cont=None, ds_points=None):
         if ds_cont:
             for ds_name, ds in ds_cont.items():
                 ds_cont_extract = (ds.sel(latitude=site_coord[0],
-                                    longitude=site_coord[1],
-                                    method='nearest')
-                                .drop(drop_coords)
-                                [keep_vars])
+                                          longitude=site_coord[1],
+                                          method='nearest')
+                                    .drop(drop_coords)
+                                    [keep_vars])
                 ds_cont_extract = ds_cont_extract.load().expand_dims(['station','source'])
                 ds_cont_extract.coords['station'] = [site_name]
                 ds_cont_extract.coords['source'] = [ds_name]
@@ -163,15 +166,15 @@ def prepare_scaling_per_site(site_list, ds_cont=None, ds_points=None):
 
     # Concat all along the 'station' dimension
     ds_all = xr.concat(ds_site_list, dim='station')
-
     # Calculate regression lines
     for p in ['location', 'scale']:
-        ref_D = 24
-        ref_param = ds_all[p].sel(duration=ref_D)
+        # ref_D = 6
+        # ref_param = ds_all[p].sel(duration=ref_D)
         dur = ds_all['duration']
         slope = ds_all['{}_line_slope'.format(p)]
+        intercept = ds_all['{}_line_intercept'.format(p)]
         linereg_var = '{}_lr'.format(p)
-        ds_all[linereg_var] = ref_param * (dur/ref_D)**slope
+        ds_all[linereg_var] = (10**intercept) * dur**slope
     # print(ds_all)
 
     # Create a dict of Pandas DF {'site': DF} with the df col prefixed with the source
@@ -179,18 +182,37 @@ def prepare_scaling_per_site(site_list, ds_cont=None, ds_points=None):
     for station in ds_all['station'].values:
         df_list = []
         for source in ds_all['source'].values:
-            ds_extract = ds_all.sel(station=station, source=source).load()
+            # get scale and location
+            ds_extract = ds_all.sel(station=station,
+                                    source=source,
+                                    scaling_extent=ds_all['scaling_extent'].values[0])
             df = ds_extract.to_dataframe()
-            drop_list = ['station', 'source',
-                         'location_line_slope', 'scale_line_slope',
-                         'scaling_ratio']
+            drop_list = ['station', 'source', 'scaling_extent',
+                        'location_line_slope', 'scale_line_slope',
+                        'scaling_ratio', 'location_lr', 'scale_lr']
             df.drop(drop_list, axis=1, inplace=True)
             rename_rules = {'location': '{}_location'.format(source),
-                            'scale': '{}_scale'.format(source),
-                            'location_lr': '{}_location_lr'.format(source),
-                            'scale_lr': '{}_scale_lr'.format(source), }
+                            'scale': '{}_scale'.format(source)}
             df.rename(columns=rename_rules, inplace=True)
             df_list.append(df)
+            # Get regression lines
+            for scaling_extent in ds_all['scaling_extent'].values:
+                extent = scaling_extent.decode("utf-8")
+                ds_extract2 = ds_all.sel(station=station,
+                                         source=source,
+                                         scaling_extent=scaling_extent)
+                df2 = ds_extract2.to_dataframe()
+                drop_list = ['station', 'source', 'scaling_extent',
+                            'location_line_slope', 'scale_line_slope',
+                            'scaling_ratio', 'location', 'scale']
+                df2.drop(drop_list, axis=1, inplace=True)
+                rename_rules = {
+                    'location_lr': '{}_location_lr_{}'.format(source, extent),
+                    'scale_lr': '{}_scale_lr_{}'.format(source, extent)
+                    }
+                df2.rename(columns=rename_rules, inplace=True)
+                df_list.append(df2)
+            # print(df)
         df_all = pd.concat(df_list, axis=1, sort=False)
         dict_df[station] =  df_all
     return dict_df
@@ -201,27 +223,31 @@ def plot_scaling_per_site(dict_df, fig_name):
     """
 
     linesyles = {
-        'MIDAS_location': dict(linestyle='None', linewidth=0, marker='v', markersize=3,
-                               color=C_PRIMARY_1, label='Location $\mu$ (MIDAS)'),
-        'MIDAS_location_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0,
-                                  color=C_PRIMARY_1, label='$\mu_D (d/D)^\\alpha$ (MIDAS)'),
-        'MIDAS_scale': dict(linestyle='None', linewidth=0, marker='v', markersize=3,
-                            color=C_PRIMARY_2, label='Scale $\sigma$ (MIDAS)'),
-        'MIDAS_scale_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0,
-                               color=C_PRIMARY_2, label='$\sigma_D (d/D)^\\beta$ (MIDAS)'),
+        # 'MIDAS_location': dict(linestyle='None', linewidth=0, marker='v', markersize=3,
+        #                        color=C_PRIMARY_1, label='Location $\mu$ (MIDAS)'),
+        # 'MIDAS_location_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0,
+        #                           color=C_PRIMARY_1, label='$a d^\\alpha$ (MIDAS)'),
+        # 'MIDAS_scale': dict(linestyle='None', linewidth=0, marker='v', markersize=3,
+        #                     color=C_PRIMARY_2, label='Scale $\sigma$ (MIDAS)'),
+        # 'MIDAS_scale_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0,
+        #                        color=C_PRIMARY_2, label='$\sigma_D (d/D)^\\beta$ (MIDAS)'),
         'ERA5_location': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
-                              color=C_SECONDARY_1, label='Location $\mu$ (ERA5)'),
-        'ERA5_location_lr': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
-                                 color=C_SECONDARY_1, label='$\mu_D (d/D)^\\alpha$ (ERA5)'),
+                              color=C_SECONDARY_1, label='Location $\mu$'),
         'ERA5_scale': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
-                           color=C_SECONDARY_2, label='Scale $\sigma$ (ERA5)'),
-        'ERA5_scale_lr': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
-                              color=C_SECONDARY_2, label='$\sigma_D (d/D)^\\beta$ (ERA5)'),
+                           color=C_SECONDARY_2, label='Scale $\sigma$'),
+        'ERA5_location_lr_all': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
+                                 color=C_SECONDARY_1, label='$a d^\\alpha$ (all)'),
+        'ERA5_scale_lr_all': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
+                              color=C_SECONDARY_2, label='$b d^\\beta$ (all)'),
+        'ERA5_location_lr_daily': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
+                                 color=C_SECONDARY_1, label='$a d^\\alpha$ (daily)'),
+        'ERA5_scale_lr_daily': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
+                              color=C_SECONDARY_2, label='$b d^\\beta$ (daily)'),
                 }
 
     col_num = 2
     row_num = math.ceil(len(dict_df)/2)
-    fig_size = (4*col_num, 2.5*row_num)
+    fig_size = (3.5*col_num, 2*row_num)
     fig, axes = plt.subplots(row_num, col_num, sharey=True, sharex=True, figsize=fig_size)
     for (site_name, df), ax in zip(dict_df.items(), axes.flat):
         print(site_name)
@@ -232,6 +258,7 @@ def plot_scaling_per_site(dict_df, fig_name):
                         # title=site_name.decode("utf-8"),
                         title=site_name,
                         loglog=True,
+                        # logx=True,
                         linestyle=styles['linestyle'], linewidth=styles['linewidth'],
                         markersize=styles['markersize'],
                         marker=styles['marker'], color=styles['color'])
@@ -267,9 +294,9 @@ def plot_scaling_per_site(dict_df, fig_name):
         #             )
         # t.set_bbox(dict(alpha=0))  # force transparent background
     # plt.legend(lines, labels, loc='lower center', ncol=4)
-    lgd = fig.legend(lines, labels, loc='lower center', ncol=4)
+    lgd = fig.legend(lines, labels, loc='lower center', ncol=3)
     plt.tight_layout()
-    plt.subplots_adjust(bottom=.1, wspace=None, hspace=None)
+    plt.subplots_adjust(bottom=.12, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
     plt.close()
 
@@ -658,9 +685,9 @@ def main():
     # plot_gumbel_per_site(ds_era, STUDY_SITES, 'sites_gumbel.png')
     use_stations = [b'BRIZE NORTON', b'LITTLE RISSINGTON',
                     b'LARKHILL', b'BOSCOMBE DOWN']
-    ds_cont = {'ERA5': ds_era.sel(scaling_extent=b'daily')}
-    ds_points = {'MIDAS': (ds_midas.sel(scaling_extent='daily'), 'src_name')}
-    sites_list = get_site_list(ds_midas, 'src_name', use_only=use_stations)
+    ds_cont = {'ERA5': ds_era.sel(scaling_extent=[b'daily', b'all'])}
+    # ds_points = {'MIDAS': (ds_midas.sel(scaling_extent='daily'), 'src_name')}
+    # sites_list = get_site_list(ds_midas, 'src_name', use_only=use_stations)
     # dict_df = prepare_scaling_per_site(sites_list,
     #                                    ds_cont=ds_cont,
     #                                    ds_points=ds_points
