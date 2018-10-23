@@ -228,12 +228,13 @@ def plot_point_map(ds, ax):
                     scaling_extent=ds.scaling_extent.values[0],
                     source=ds.source.values[0],)
     df = ds_sel.to_dataframe()
-    df['geometry'] = [shapely.geometry.Point(
-        lon, lat) for lon, lat in zip(df['longitude'], df['latitude'])]
+    df['geometry'] = [shapely.geometry.Point(lon, lat)
+                      for lon, lat in zip(df['longitude'],
+                                          df['latitude'])]
     gdf = gpd.GeoDataFrame(df, geometry='geometry')
     ax.set_global()
-    ax.coastlines(linewidth=.3, color='0.5')
-    gdf.plot(ax=ax, markersize=20, transform=ctpy.crs.PlateCarree())
+    ax.coastlines(linewidth=.3, color='0.5', zorder=0)
+    gdf.plot(ax=ax, markersize=20, transform=ctpy.crs.PlateCarree(), zorder=20)
     # ax.set_title('Sites location')
 
 
@@ -268,7 +269,6 @@ def plot_scaling_per_site(ds, fig_name):
     row_num = math.ceil(len(dict_df) / col_num)
     fig_size = (3.5*col_num, 2*row_num)
     fig = plt.figure(figsize=fig_size)
-    # fig, axes = plt.subplots(row_num, col_num, sharey=True, sharex=True, figsize=fig_size)
     ax_num = 1
     sites_ax_list = []
     for site_name, df in dict_df.items():
@@ -296,7 +296,6 @@ def plot_scaling_per_site(ds, fig_name):
         ax.set_xlabel('$d$ (hours)')
         ax.set_ylabel('$\mu, \sigma$')
         sites_ax_list.append(ax)
-        ax_num += 1
         # Text box
         # table_row = "{:<11s} {:>5.2f} {:>8.2f} {:>5.2f}\n"
         # txt = ["{:<11s} {:>5s} {:>8s} {:>5s}\n".format('Parameter', 'ERA5', 'ERA5 day', 'GHCN'),
@@ -321,6 +320,7 @@ def plot_scaling_per_site(ds, fig_name):
         #             transform=ax.transAxes, size=7, family='monospace'
         #             )
         # t.set_bbox(dict(alpha=0))  # force transparent background
+        ax_num += 1
 
     # set ticks
     for ax in sites_ax_list:
@@ -538,40 +538,13 @@ def fig_maps_rsquared(ds):
                '$r^2$', 'gumbel_r2_daily.png', sqr=False)
 
 
-def fig_scaling_differences_era(ds):
-    """Sub-daily scaling differences plot for the whole of ERA5
+def get_quantile_dict(quantiles, **kwargs):
     """
-    plot_scaling_differences('scaling_diff_ERA_world.pdf',
-                             [0.01, 0.5, 0.99],
-                             ERA5=(ds, ['latitude', 'longitude']))
-
-
-def fig_scaling_differences_midas(ds_era, ds_midas):
-    """Sub-daily scaling differences plot for MIDAS gauges and a selection of ERA5
-    """
-    # Select the ERA cells where MIDAs stations are presents
-    ds_era_sel = ds_era.sel(latitude=ds_midas['latitude'],
-                            longitude=ds_midas['longitude'],
-                            method='nearest')
-
-    plot_scaling_differences('scaling_diff_ERA_midas.pdf',
-                             [0.01, 0.5, 0.99],
-                             ERA5=(ds_era_sel, ['station']),
-                             MIDAS=(ds_midas, ['station'])
-                             )
-
-
-def plot_scaling_differences(fig_name, quantiles, **kwargs):
-    """for each duration, compute the differences between regression line fitted on the daily data and the actual Gumbel parameter
-    Then, compute the quantiles of those differences.
-    Plot them
     kwargs: a dict of 'source': (ds, dim)
+    return df_dict: {param: [(source, df), ]}
     """
-    param_symbols = {'location': '\mu_d', 'scale': '\sigma_d'}
-    gradient_symbols = {'location': '\\alpha', 'scale': '\\beta'}
-    intercept_symbols = {'location': 'a', 'scale': 'b'}
     df_dict = {}
-    for param in param_symbols.keys():
+    for param in ['location', 'scale']:
         # Actual values of the regression lines
         df_list = []
         for source, (ds, dim) in kwargs.items():
@@ -587,37 +560,54 @@ def plot_scaling_differences(fig_name, quantiles, **kwargs):
             df_q = diff_q.to_dataset('quantile').to_dataframe()
             df_list.append((source, df_q))
         df_dict[param] = df_list
+    return df_dict
 
-    numrows = len(list(param_symbols.keys()))
-    fig, axes = plt.subplots(numrows, 1,
-                             figsize=(4, 3),
-                             sharex=True, sharey=False)
-    ylim = {'location': [-0.25, 0.75], 'scale': [-0.6, 1.1]}
 
-    q_min = quantiles[0]
-    q_max = quantiles[-1]
-    for (param, df_list), ax in zip(df_dict.items(), axes):
-        for (source, df), color in zip(df_list, [C_PRIMARY_1, C_PRIMARY_2]):
-            title = '{} ${}$'.format(param.title(), param_symbols[param])
-            fill_label = '{} Q{} to Q{}'.format(source, int(q_min*100), int(q_max*100))
-            df[0.5].plot(logx=True, logy=False, ax=ax,
-                         linewidth=1, color=color, zorder=10,
-                        #  title=title,
-                         label='{} median'.format(source))
-            ax.fill_between(df.index, df[q_min], df[q_max],
-                            facecolor=color, alpha=0.2, zorder=1,
-                            label=fill_label)
-        ax.axhline(0, linewidth=0.1, color='0.5')
-        ax.axvline(24, linewidth=0.1, color='0.5')
-        ax.set_ylim(ylim[param])
-        # ax.set_yticks([ 0.0, 0.5])
+def fig_scaling_differences_all(ds_era, ds_midas):
+    quantiles = [0.01, 0.5, 0.99]
+
+    ds_era_sel = ds_era.sel(latitude=ds_midas['latitude'],
+                            longitude=ds_midas['longitude'],
+                            method='nearest')
+
+    q_extent_dict = {
+        'Whole world': get_quantile_dict(quantiles,
+                                         ERA5=(ds_era, ['latitude', 'longitude']),
+                                         ),
+        'MIDAS stations': get_quantile_dict(quantiles,
+                                            ERA5=(ds_era_sel, ['station']),
+                                            MIDAS=(ds_midas, ['station'])
+                                            ),
+        }
+
+    # Flatten the dict
+    q_list = []
+    for extent, df_dict in q_extent_dict.items():
+        for param, df_list in df_dict.items():
+            q_list.append({'extent':extent,
+                           'param':param,
+                           'df_list':df_list})
+
+    fig_name = 'scaling_diff.pdf'
+    col_num = len(q_extent_dict)
+    row_num = 2
+    fig, axes = plt.subplots(row_num, col_num, figsize=(7, 3),
+                             sharey='row', sharex=True)
+
+    # param in rows, extent in columns
+    for row_num, (param, ax_row) in enumerate(zip(['location', 'scale'], axes)):
+        for extent, ax in zip(q_extent_dict, ax_row):
+            df_list = [i['df_list'] for i in q_list
+                        if i['extent'] == extent
+                        and i['param'] == param][0]
+            plot_scaling_differences(param, df_list, ax)
+            if row_num == 0:
+                ax.set_title(extent)
+
+    # set ticks
+    for ax in axes.flat:
         ax.set_xticks(XTICKS)
         ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
-        ax.set_xlabel('$d$ (hours)')
-        ylabel = '$\log_{{10}}( {i}d^{g} / {p} )$'.format(g=gradient_symbols[param],
-                                                          p=param_symbols[param],
-                                                          i=intercept_symbols[param])
-        ax.set_ylabel(ylabel)
 
     # add a big axes, hide frame
     # fig.add_subplot(111, frameon=False)
@@ -634,7 +624,42 @@ def plot_scaling_differences(fig_name, quantiles, **kwargs):
     plt.subplots_adjust(bottom=0.35, left=0.15, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name), bbox='tight')
     plt.close()
-    # print(ds_q.sel(quantile=0.5))
+
+
+def plot_scaling_differences(param, df_list, ax):
+    """
+    Plot quantiles of differences
+    """
+    ylim = {'location': [-0.25, 0.75], 'scale': [-0.6, 1.1]}
+    param_symbols = {'location': '\mu_d', 'scale': '\sigma_d'}
+    gradient_symbols = {'location': '\\alpha', 'scale': '\\beta'}
+    intercept_symbols = {'location': 'a', 'scale': 'b'}
+
+    for (source, df), color in zip(df_list, [C_PRIMARY_1, C_PRIMARY_2]):
+        quantiles = df.columns.values
+        q_min = quantiles[0]
+        q_max = quantiles[-1]
+        title = '{} ${}$'.format(param.title(), param_symbols[param])
+        fill_label = '{} Q{} to Q{}'.format(source, int(q_min*100), int(q_max*100))
+        df[0.5].plot(logx=True, logy=False, ax=ax,
+                        linewidth=1, color=color, zorder=10,
+                    #  title=title,
+                        label='{} median'.format(source))
+        ax.fill_between(df.index, df[q_min], df[q_max],
+                        facecolor=color, alpha=0.2, zorder=1,
+                        label=fill_label)
+    ax.axhline(0, linewidth=0.1, color='0.5')
+    ax.axvline(24, linewidth=0.1, color='0.5')
+    ax.set_ylim(ylim[param])
+    # ax.set_yticks([ 0.0, 0.5])
+    ax.set_xticks(XTICKS)
+    ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+    ax.set_xlabel('$d$ (hours)')
+    ylabel = '$\log_{{10}}( {i}d^{g} / {p} )$'.format(g=gradient_symbols[param],
+                                                        p=param_symbols[param],
+                                                        i=intercept_symbols[param])
+    ax.set_ylabel(ylabel)
+
 
 
 def fig_scaling_ratio_map(ds):
@@ -700,8 +725,7 @@ def main():
     # table_r_sigcount(ds_era, 0.05, dim=['longitude', 'latitude'])
     # table_r_sigcount(ds_era, 0.01, dim=['longitude', 'latitude'])
     # fig_scaling_gradients_maps(ds_era)
-    # fig_scaling_differences_era(ds_era)
-    # fig_scaling_differences_midas(ds_era, ds_midas)
+    fig_scaling_differences_all(ds_era, ds_midas)
     # fig_maps_r(ds_era)
     # fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)
@@ -726,9 +750,9 @@ def main():
 
     # print((~np.isfinite(ds)).sum().compute())
     # plot_gumbel_per_site(ds_era, STUDY_SITES, 'sites_gumbel.png')
-    use_stations = [b'BRIZE NORTON', b'LITTLE RISSINGTON',
-                    b'LARKHILL', b'BOSCOMBE DOWN']
-    ds_cont = {'ERA5': ds_era.sel(scaling_extent=[b'daily', b'all'])}
+    # use_stations = [b'BRIZE NORTON', b'LITTLE RISSINGTON',
+    #                 b'LARKHILL', b'BOSCOMBE DOWN']
+    # ds_cont = {'ERA5': ds_era.sel(scaling_extent=[b'daily', b'all'])}
     # ds_points = {'MIDAS': (ds_midas.sel(scaling_extent='daily'), 'src_name')}
     # sites_list = get_site_list(ds_midas, 'src_name', use_only=use_stations)
     # dict_df = prepare_scaling_per_site(sites_list,
@@ -737,10 +761,11 @@ def main():
     #                                    )
     # plot_scaling_per_site(dict_df, 'sites_scaling_midas_select_2000-2017_test.pdf')
 
-    ds = combine_ds_per_site(STUDY_SITES,
-                                       ds_cont=ds_cont,
-                                       )
-    plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017.pdf')
+    # ds = combine_ds_per_site(STUDY_SITES,
+    #                                    ds_cont=ds_cont,
+    #                                    )
+    # plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017.pdf')
+
 
 
     # single_map(ds_era['scaling_pearsonr'],
