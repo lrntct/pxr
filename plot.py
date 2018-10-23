@@ -34,11 +34,11 @@ EXTRACT = dict(latitude=slice(45, -45),
 # Coordinates of study sites
 # STUDY_SITES = {'Kampala': (0.317, 32.616),
 #                'Kisumu': (0.1, 34.75)}
-STUDY_SITES = {'Jakarta': (-6.2, 106.816), 'Sydney': (33.865, 151.209),
+STUDY_SITES = {'Jakarta': (-6.2, 106.816), 'Sydney': (-33.865, 151.209),
                'Beijing': (39.92, 116.38), 'New Delhi': (28.614, 77.21),
                'Nairobi': (-1.28, 36.82), 'Brussels': (50.85, 4.35),
-               'Santiago': (-33.45, -70.67), 'New York City': (40.72, -74.0),
-               'Mexico City': (19.43, -99.13)
+               'Santiago': (-33.45, -70.67+360), 'New York City': (40.72, -74.0+360),
+               'Mexico City': (19.43, -99.13+360)
                }
 
 XTICKS = [1, 3, 6, 12, 24, 48, 120, 360]
@@ -120,7 +120,7 @@ def get_site_list(ds, name_col, use_only=None):
     return sites
 
 
-def prepare_scaling_per_site(site_list, ds_cont=None, ds_points=None):
+def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
     """
     """
     if not ds_cont and not ds_cont:
@@ -130,11 +130,13 @@ def prepare_scaling_per_site(site_list, ds_cont=None, ds_points=None):
                       'location_line_intercept', 'scale_line_intercept',
                       'scaling_ratio']
     keep_vars = ['location', 'scale'] + scaling_coeffs
-    drop_coords = ['latitude', 'longitude', 'gumbel_fit']
+    drop_coords = [#'latitude', 'longitude',
+                   'gumbel_fit']
 
     # Extract sites values from the datasets. combine all ds along a new 'source' dimension
     ds_site_list = []
     for site_name, site_coord in list(site_list.items()):
+        print(site_name)
         ds_site_sources = []
         # Select site on continous ds
         if ds_cont:
@@ -161,7 +163,6 @@ def prepare_scaling_per_site(site_list, ds_cont=None, ds_points=None):
                 ds_site_sources.append(ds_pt_extract)
         # Concatenate all sites along the source dimension
         ds_all_sources = xr.concat(ds_site_sources, dim='source')
-        # print(ds_all_sources)
         ds_site_list.append(ds_all_sources)
 
     # Concat all along the 'station' dimension
@@ -175,17 +176,21 @@ def prepare_scaling_per_site(site_list, ds_cont=None, ds_points=None):
         intercept = ds_all['{}_line_intercept'.format(p)]
         linereg_var = '{}_lr'.format(p)
         ds_all[linereg_var] = (10**intercept) * dur**slope
-    # print(ds_all)
+    print(ds_all.sel(duration=2, station='Jakarta',
+                     scaling_extent=b'daily'))
+    return ds_all
 
+
+def ds_to_df(ds):
     # Create a dict of Pandas DF {'site': DF} with the df col prefixed with the source
     dict_df = {}
-    for station in ds_all['station'].values:
+    for station in ds['station'].values:
         df_list = []
-        for source in ds_all['source'].values:
+        for source in ds['source'].values:
             # get scale and location
-            ds_extract = ds_all.sel(station=station,
-                                    source=source,
-                                    scaling_extent=ds_all['scaling_extent'].values[0])
+            ds_extract = ds.sel(station=station,
+                                source=source,
+                                scaling_extent=ds['scaling_extent'].values[0])
             df = ds_extract.to_dataframe()
             drop_list = ['station', 'source', 'scaling_extent',
                         'location_line_slope', 'scale_line_slope',
@@ -196,9 +201,9 @@ def prepare_scaling_per_site(site_list, ds_cont=None, ds_points=None):
             df.rename(columns=rename_rules, inplace=True)
             df_list.append(df)
             # Get regression lines
-            for scaling_extent in ds_all['scaling_extent'].values:
+            for scaling_extent in ds['scaling_extent'].values:
                 extent = scaling_extent.decode("utf-8")
-                ds_extract2 = ds_all.sel(station=station,
+                ds_extract2 = ds.sel(station=station,
                                          source=source,
                                          scaling_extent=scaling_extent)
                 df2 = ds_extract2.to_dataframe()
@@ -218,10 +223,23 @@ def prepare_scaling_per_site(site_list, ds_cont=None, ds_points=None):
     return dict_df
 
 
-def plot_scaling_per_site(dict_df, fig_name):
-    """
-    """
+def plot_point_map(ds, ax):
+    ds_sel = ds.sel(duration=ds.duration.values[0],
+                    scaling_extent=ds.scaling_extent.values[0],
+                    source=ds.source.values[0],)
+    df = ds_sel.to_dataframe()
+    df['geometry'] = [shapely.geometry.Point(
+        lon, lat) for lon, lat in zip(df['longitude'], df['latitude'])]
+    gdf = gpd.GeoDataFrame(df, geometry='geometry')
+    ax.set_global()
+    ax.coastlines(linewidth=.3, color='0.5')
+    gdf.plot(ax=ax, markersize=20, transform=ctpy.crs.PlateCarree())
+    # ax.set_title('Sites location')
 
+
+def plot_scaling_per_site(ds, fig_name):
+    """
+    """
     linesyles = {
         # 'MIDAS_location': dict(linestyle='None', linewidth=0, marker='v', markersize=3,
         #                        color=C_PRIMARY_1, label='Location $\mu$ (MIDAS)'),
@@ -245,11 +263,21 @@ def plot_scaling_per_site(dict_df, fig_name):
                               color=C_SECONDARY_2, label='$b d^\\beta$ (daily)'),
                 }
 
+    dict_df = ds_to_df(ds)
     col_num = 2
-    row_num = math.ceil(len(dict_df)/2)
+    row_num = math.ceil(len(dict_df) / col_num)
     fig_size = (3.5*col_num, 2*row_num)
-    fig, axes = plt.subplots(row_num, col_num, sharey=True, sharex=True, figsize=fig_size)
-    for (site_name, df), ax in zip(dict_df.items(), axes.flat):
+    fig = plt.figure(figsize=fig_size)
+    # fig, axes = plt.subplots(row_num, col_num, sharey=True, sharex=True, figsize=fig_size)
+    ax_num = 1
+    sites_ax_list = []
+    for site_name, df in dict_df.items():
+        if ax_num == 1:
+            ax = fig.add_subplot(row_num, col_num, ax_num)
+            first_ax = ax
+        else:
+            ax = fig.add_subplot(row_num, col_num, ax_num,
+                                 sharex=first_ax, sharey=first_ax)
         print(site_name)
         # plot
         for col, styles in linesyles.items():
@@ -267,8 +295,8 @@ def plot_scaling_per_site(dict_df, fig_name):
         lines, labels = ax.get_legend_handles_labels()
         ax.set_xlabel('$d$ (hours)')
         ax.set_ylabel('$\mu, \sigma$')
-        ax.set_xticks(XTICKS)
-        ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+        sites_ax_list.append(ax)
+        ax_num += 1
         # Text box
         # table_row = "{:<11s} {:>5.2f} {:>8.2f} {:>5.2f}\n"
         # txt = ["{:<11s} {:>5s} {:>8s} {:>5s}\n".format('Parameter', 'ERA5', 'ERA5 day', 'GHCN'),
@@ -293,7 +321,20 @@ def plot_scaling_per_site(dict_df, fig_name):
         #             transform=ax.transAxes, size=7, family='monospace'
         #             )
         # t.set_bbox(dict(alpha=0))  # force transparent background
+
+    # set ticks
+    for ax in sites_ax_list:
+        ax.set_xticks(XTICKS)
+        ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+
     # plt.legend(lines, labels, loc='lower center', ncol=4)
+
+    # Draw map on the last ax
+    ax_map = fig.add_subplot(row_num, col_num, ax_num,
+                             projection=ctpy.crs.Robinson(),
+                             aspect='auto')
+    plot_point_map(ds, ax_map)
+
     lgd = fig.legend(lines, labels, loc='lower center', ncol=3)
     plt.tight_layout()
     plt.subplots_adjust(bottom=.12, wspace=None, hspace=None)
@@ -526,8 +567,9 @@ def plot_scaling_differences(fig_name, quantiles, **kwargs):
     Plot them
     kwargs: a dict of 'source': (ds, dim)
     """
-    param_symbols = {'location': '\mu', 'scale': '\sigma'}
+    param_symbols = {'location': '\mu_d', 'scale': '\sigma_d'}
     gradient_symbols = {'location': '\\alpha', 'scale': '\\beta'}
+    intercept_symbols = {'location': 'a', 'scale': 'b'}
     df_dict = {}
     for param in param_symbols.keys():
         # Actual values of the regression lines
@@ -572,8 +614,9 @@ def plot_scaling_differences(fig_name, quantiles, **kwargs):
         ax.set_xticks(XTICKS)
         ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
         ax.set_xlabel('$d$ (hours)')
-        ylabel = '$\log_{{10}}( d^{g} / {p} )$'.format(g=gradient_symbols[param],
-                                                       p=param_symbols[param])
+        ylabel = '$\log_{{10}}( {i}d^{g} / {p} )$'.format(g=gradient_symbols[param],
+                                                          p=param_symbols[param],
+                                                          i=intercept_symbols[param])
         ax.set_ylabel(ylabel)
 
     # add a big axes, hide frame
@@ -694,10 +737,10 @@ def main():
     #                                    )
     # plot_scaling_per_site(dict_df, 'sites_scaling_midas_select_2000-2017_test.pdf')
 
-    dict_df = prepare_scaling_per_site(STUDY_SITES,
+    ds = combine_ds_per_site(STUDY_SITES,
                                        ds_cont=ds_cont,
                                        )
-    plot_scaling_per_site(dict_df, 'sites_scaling_select_2000-2017.pdf')
+    plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017.pdf')
 
 
     # single_map(ds_era['scaling_pearsonr'],
