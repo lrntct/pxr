@@ -233,9 +233,9 @@ def plot_point_map(ds, ax):
                                           df['latitude'])]
     gdf = gpd.GeoDataFrame(df, geometry='geometry')
     ax.set_global()
-    ax.coastlines(linewidth=.3, color='0.5', zorder=0)
-    gdf.plot(ax=ax, markersize=20, transform=ctpy.crs.PlateCarree(), zorder=20)
-    # ax.set_title('Sites location')
+    ax.coastlines(linewidth=.3, color='0.6', zorder=0)
+    gdf.plot(ax=ax, markersize=25, transform=ctpy.crs.PlateCarree(), zorder=20)
+    ax.set_title('Sample sites location')
 
 
 def plot_scaling_per_site(ds, fig_name):
@@ -270,9 +270,17 @@ def plot_scaling_per_site(ds, fig_name):
     fig_size = (3.5*col_num, 2*row_num)
     fig = plt.figure(figsize=fig_size)
     ax_num = 1
+
+    # Draw map
+    ax_map = fig.add_subplot(row_num, col_num, ax_num,
+                             projection=ctpy.crs.Robinson(),
+                             aspect='auto')
+    plot_point_map(ds, ax_map)
+    ax_num += 1
+
     sites_ax_list = []
-    for site_name, df in dict_df.items():
-        if ax_num == 1:
+    for site_ax_num, (site_name, df) in enumerate(dict_df.items()):
+        if site_ax_num == 0:
             ax = fig.add_subplot(row_num, col_num, ax_num)
             first_ax = ax
         else:
@@ -328,12 +336,6 @@ def plot_scaling_per_site(ds, fig_name):
         ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
 
     # plt.legend(lines, labels, loc='lower center', ncol=4)
-
-    # Draw map on the last ax
-    ax_map = fig.add_subplot(row_num, col_num, ax_num,
-                             projection=ctpy.crs.Robinson(),
-                             aspect='auto')
-    plot_point_map(ds, ax_map)
 
     lgd = fig.legend(lines, labels, loc='lower center', ncol=3)
     plt.tight_layout()
@@ -591,7 +593,7 @@ def fig_scaling_differences_all(ds_era, ds_midas):
     fig_name = 'scaling_diff.pdf'
     col_num = len(q_extent_dict)
     row_num = 2
-    fig, axes = plt.subplots(row_num, col_num, figsize=(7, 3),
+    fig, axes = plt.subplots(row_num, col_num, figsize=(6, 3),
                              sharey='row', sharex=True)
 
     # param in rows, extent in columns
@@ -725,7 +727,7 @@ def main():
     # table_r_sigcount(ds_era, 0.05, dim=['longitude', 'latitude'])
     # table_r_sigcount(ds_era, 0.01, dim=['longitude', 'latitude'])
     # fig_scaling_gradients_maps(ds_era)
-    fig_scaling_differences_all(ds_era, ds_midas)
+    # fig_scaling_differences_all(ds_era, ds_midas)
     # fig_maps_r(ds_era)
     # fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)
@@ -752,7 +754,6 @@ def main():
     # plot_gumbel_per_site(ds_era, STUDY_SITES, 'sites_gumbel.png')
     # use_stations = [b'BRIZE NORTON', b'LITTLE RISSINGTON',
     #                 b'LARKHILL', b'BOSCOMBE DOWN']
-    # ds_cont = {'ERA5': ds_era.sel(scaling_extent=[b'daily', b'all'])}
     # ds_points = {'MIDAS': (ds_midas.sel(scaling_extent='daily'), 'src_name')}
     # sites_list = get_site_list(ds_midas, 'src_name', use_only=use_stations)
     # dict_df = prepare_scaling_per_site(sites_list,
@@ -761,10 +762,9 @@ def main():
     #                                    )
     # plot_scaling_per_site(dict_df, 'sites_scaling_midas_select_2000-2017_test.pdf')
 
-    # ds = combine_ds_per_site(STUDY_SITES,
-    #                                    ds_cont=ds_cont,
-    #                                    )
-    # plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017.pdf')
+    ds_cont = {'ERA5': ds_era.sel(scaling_extent=[b'daily', b'all'])}
+    ds = combine_ds_per_site(STUDY_SITES, ds_cont=ds_cont, )
+    plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017.pdf')
 
 
 
