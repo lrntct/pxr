@@ -7,6 +7,7 @@ import os
 import datetime
 import math
 import itertools
+import subprocess
 
 import numpy as np
 import xarray as xr
@@ -27,6 +28,10 @@ ERA_ANNUAL_FILE = 'era5_2000-2017_precip_complete.zarr'
 MIDAS_ANNUAL_FILE = '../data/MIDAS/midas_2000-2017_precip_scaling.nc'
 # HADISD_ANNUAL_FILE = '../data/HadISD/hadisd_2000-2017_precip_scaling.nc'
 PLOT_DIR = '../plot'
+
+MIDAS_SUM = '../data/midas_sum_uk.tiff'
+MIDAS_STATIONS = '../data/MIDAS/midas_wgs84.gpkg'
+NE_LAND = '../data/ne_land_10m.gpkg'
 
 EXTRACT = dict(latitude=slice(45, -45),
                longitude=slice(0, 180))
@@ -409,7 +414,7 @@ def plot_gauges_data(ds, ymin, ymax, fig_name):
     plt.close()
 
 
-def plot_gauges_map(ds, id_dim, fig_name, global_extent=True):
+def plot_gauges_map_from_ds(ds, id_dim, fig_name, global_extent=True):
     """convert dataset in geopandas DataFrame
     plot it
     """
@@ -436,9 +441,53 @@ def plot_gauges_map(ds, id_dim, fig_name, global_extent=True):
                             )
     ax_p.coastlines(linewidth=.3, color='black')
     gdf.plot(ax=ax_p, markersize=5, transform=ctpy.crs.PlateCarree())
-
-
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.close()
+
+
+def fig_gauges_map(fig_name):
+    crs = ctpy.crs.PlateCarree()
+    rast = xr.open_rasterio(MIDAS_SUM, parse_coordinates=True).drop('band')
+    midas = gpd.read_file(MIDAS_STATIONS)
+    ne_land = gpd.read_file(NE_LAND)
+
+    xmin = min(rast['x'])
+    xmax = max(rast['x'])
+    ymin = min(rast['y'])
+    ymax = max(rast['y'])
+    aspect = len(rast['x']) / len(rast['y'])
+    fig_width = 5
+    fig = plt.figure(figsize=(fig_width, fig_width*aspect))
+    ax_p = fig.gca(projection=crs,
+                   aspect=aspect)
+    ticks = [0,1,2]
+    rast.plot(ax=ax_p, transform=crs, cmap=plt.get_cmap('Reds', 3), robust=False,
+              cbar_kwargs=dict(orientation='horizontal', label='# MIDAS stations per ERA5 cell',
+                               ticks=ticks, fraction=0.04, pad=0.08, aspect=6),
+              vmin=min(ticks)-0.5, vmax=max(ticks)+.5)
+    # midas.plot(ax=ax_p, color=C_PRIMARY_1, marker='x', markersize=10,
+    #            linewidth=1, label='MIDAS station')
+    ne_land.plot(ax=ax_p, color='', edgecolor='0.2',
+                 linewidth=0.4, alpha=0.4)
+
+    ax_p.set_extent([xmin, xmax, ymin, ymax], crs=crs)
+    gl = ax_p.gridlines(crs=crs, linewidth=.3,
+                        # linestyle='dashed',  dashes=(10,20),
+                        alpha=0.4,
+                        draw_labels=True,
+                        xlocs=np.arange(-10, 10, 2),
+                        ylocs=np.arange(40, 70, 2),
+                        )
+    gl.xlabels_top = False
+    gl.ylabels_right = False
+    gl.xformatter = LONGITUDE_FORMATTER
+    gl.yformatter = LATITUDE_FORMATTER
+    # handles, labels = ax_p.get_legend_handles_labels()
+    # fig.legend(handles, labels, loc='lower right', ncol=2)
+    # plt.tight_layout()
+    fig_path = os.path.join(PLOT_DIR, fig_name)
+    plt.savefig(fig_path)
+    subprocess.call(['pdfcrop', '--margins', '10', fig_path, fig_path])
     plt.close()
 
 
@@ -712,7 +761,7 @@ def station_permut(ds):
 def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_ANNUAL_FILE)).sel(gumbel_fit=b'scipy')
     ds_midas = xr.open_dataset(MIDAS_ANNUAL_FILE).sel(gumbel_fit='scipy')
-    # print(ds_era)
+    # print(ds_era.latitude.load())
     # print(ds_midas)
     # station_permut(ds_midas)
 
@@ -731,6 +780,8 @@ def main():
     # fig_maps_r(ds_era)
     # fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)
+
+    fig_gauges_map('midas_gauges_map.pdf')
 
     # fig_map_anderson(ds_era)
     # ds_ghcn = xr.open_dataset(GHCN_ANNUAL_FILE)
@@ -762,9 +813,9 @@ def main():
     #                                    )
     # plot_scaling_per_site(dict_df, 'sites_scaling_midas_select_2000-2017_test.pdf')
 
-    ds_cont = {'ERA5': ds_era.sel(scaling_extent=[b'daily', b'all'])}
-    ds = combine_ds_per_site(STUDY_SITES, ds_cont=ds_cont, )
-    plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017.pdf')
+    # ds_cont = {'ERA5': ds_era.sel(scaling_extent=[b'daily', b'all'])}
+    # ds = combine_ds_per_site(STUDY_SITES, ds_cont=ds_cont, )
+    # plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017.pdf')
 
 
 
