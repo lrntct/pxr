@@ -16,6 +16,8 @@ import dask
 from dask.diagnostics import ProgressBar
 import zarr
 import numpy as np
+import shapely.geometry
+import geopandas as gpd
 
 
 BASE_DIR = '/home/lunet/gylc4/geodata/MIDAS/'
@@ -55,6 +57,12 @@ GEN_FLOAT_ENCODING = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clev
 #             'elevation': {'dtype': DTYPE},
 #             'latitude': {'dtype': DTYPE},
 #             'longitude': {'dtype': DTYPE}}
+
+# Stations inside an ERA5 cell
+station_pairs = [('SALSBURGH', 'DRUMALBIN')
+                 ('LEEMING', 'TOPCLIFFE')
+                 ('LARKHILL', 'BOSCOMBE DOWN')
+                 ('HEATHROW', 'NORTHOLT')]
 
 
 def read_stations(data_dir):
@@ -202,26 +210,43 @@ def quality_assessment(ds):
     # print(ds['qc3'].sum().load())
     return ds
 
+
+def to_gdf(ds):
+    """return names as a geoDataframe
+    """
+    names = ds.src_name.load().drop('src_name')
+    df = names.to_dataframe().dropna()
+    df['geometry'] = [shapely.geometry.Point(lon, lat)
+              for lon, lat in zip(df['longitude'], df['latitude'])]
+    df['name'] = df['src_name'].str.decode("utf-8")
+    del df['src_name']
+    gdf = gpd.GeoDataFrame(df, geometry='geometry')
+    return gdf
+
+
 def main():
     with ProgressBar():
         # print(df.head())
         # ds = read_stations(STATIONS_DIR).chunk(CHUNKS)
         # print(ds)
         # ds.to_zarr(OUT_FILE, mode='w')
-        ds = xr.open_zarr(OUT_FILE)
-        ds = quality_assessment(ds)
-        ds_sel = select_stations(ds, 2000, 2017).chunk(CHUNKS)
+        # ds = xr.open_zarr(OUT_FILE)
+        # ds = quality_assessment(ds)
+        # ds_sel = select_stations(ds, 2000, 2017).chunk(CHUNKS)
         # ds_loaded = ds_sel.load()
         # print(ds)
-        print(ds_sel['prcp_amt'])
+        # print(ds_sel['prcp_amt'])
         # print(ds_loaded['prcp_amt'].mean())
         # print(ds_loaded['prcp_amt'].min())
         # print(ds_loaded['prcp_amt'].max())
         # print(ds_loaded['ob_hour_count'].max())
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_sel.data_vars.keys()}
-        ds_sel.load().to_zarr(SELECT_FILE, mode='w')
+        # ds_sel.load().to_zarr(SELECT_FILE, mode='w')
 
-        # ds_sel = xr.open_zarr(SELECT_FILE)
+        ds_sel = xr.open_zarr(SELECT_FILE)
+        gdf = to_gdf(ds_sel)
+        out_path = os.path.join('../data/MIDAS', "midas.gpkg")
+        gdf.to_file(out_path, driver="GPKG")
         # print(ds_sel.max().load())
 
 
