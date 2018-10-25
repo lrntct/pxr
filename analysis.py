@@ -16,8 +16,8 @@ import scipy.optimize
 import statsmodels.api as sm
 
 
-DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
-# DATA_DIR = '../data/MIDAS/'
+# DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
+DATA_DIR = '../data/MIDAS/'
 HOURLY_FILE1 = 'midas_2000-2017_precip_pairs.nc'
 # HOURLY_FILE2 = 'era5_2013-2017_precip.zarr'
 
@@ -192,16 +192,18 @@ def KS_test(ds):
     """
     ds = ds.chunk({'duration':-1})
     ds['analytic_prob'] = gumbel_cdf(ds['annual_max'], ds['location'], ds['scale'])
-    ds['ks'] = xr.apply_ufunc(lambda x,y: np.max(np.abs(x-y)),
+    ds['KS_D'] = xr.apply_ufunc(lambda x,y: np.max(np.abs(x-y)),
                                     ds['estim_prob'], ds['analytic_prob'],
                                     input_core_dims=[['year'], ['year']],
                                     vectorize=True,
                                     dask='parallelized',
                                     output_dtypes=[DTYPE]
                                     )
-    # Dcrit at the 0.05 confidence
+    # Dcrit
     len_dur = len(ds['duration'])
-    ds['Dcrit_5pct'] = 1.36 * np.sqrt((len_dur+len_dur)/(len_dur*len_dur))
+    alpha = ds['significance_level'] / 100
+    c = np.sqrt(-.5 * np.log(alpha))
+    ds['KS_Dcrit'] = c * np.sqrt((len_dur+len_dur)/(len_dur*len_dur))
     return ds
 
 
@@ -317,7 +319,7 @@ def step2_fit_gumbel(da_annual_maxs):
     # Estimate probability F{x} with the Weibull formula
     ds['estim_prob'] = (ds['rank'] / (n_obs+1)).astype(DTYPE)
     # Goodness of fit of the Gumbel distribution
-    anderson_darling(ds)
+    da_crit, da_a2 = anderson_darling(ds)
     # Do the fitting
     ds_list = []
     for fit_func, name in [(gumbel_fit_moments, 'moments'),
@@ -329,7 +331,7 @@ def step2_fit_gumbel(da_annual_maxs):
         ds_fit.coords['gumbel_fit'] = [name]
         ds_list.append(ds_fit)
     ds_fit = xr.concat(ds_list, dim='gumbel_fit')
-    ds = xr.merge([ds, ds_fit])
+    ds = xr.merge([da_crit, da_a2, ds, ds_fit])
     # Perform the Kolmogorov-Smirnov test
     ds = KS_test(ds)
     return ds
@@ -354,19 +356,20 @@ def step3_scaling(ds):
         da_list = []
         for g_param_name in ['location', 'scale']:
             param_col = 'log_{}'.format(g_param_name)
-            # Do the linear regression. Keep only the 3 first results
-            slope, intercept, rvalue = linregress(nanlinregress,
+            # Do the linear regression.
+            slope, intercept, rvalue, pvalue, stderr = linregress(nanlinregress,
                                                   ds_sel['log_duration'],
                                                   ds_sel[param_col],
-                                                  ['duration'])[:3]
+                                                  ['duration'])
             # Fit a logistic function
             maximum, steepness, midpoint = logistic_regression(ds_sel['log_duration'],
                                                                ds_sel[param_col],
                                                                ['duration'])
 
-            for var_name, da in zip(['line_slope', 'line_intercept', 'line_rvalue',
+            for var_name, da in zip(['line_slope', 'line_intercept', 'line_rvalue', 'line_pvalue', 'line_stderr',
                                      'logistic_max', 'logistic_steepness', 'logistic_midpoint'],
-                                    [slope, intercept, rvalue, maximum, steepness, midpoint]):
+                                    [slope, intercept, rvalue, pvalue, stderr,
+                                     maximum, steepness, midpoint]):
                 da.name = '{}_{}'.format(g_param_name, var_name)
                 da_list.append(da)
         # Group all DataArrays in a single dataset
@@ -450,14 +453,16 @@ def step4_scaling_correlation(ds):
     for dur_name, durations in DURATION_DICT.items():
         # Select only the durations of interest
         ds_sel = ds.sel(duration=durations)
-        scaling_pearsonr = xr.apply_ufunc(pearsonr,
+        rvalue, pvalue = xr.apply_ufunc(pearsonr,
                                         ds_sel['location'], ds_sel['scale'],
                                         input_core_dims=[['duration'], ['duration']],
-                                        # output_core_dims=[[]],
+                                        output_core_dims=[[], []],
                                         vectorize=True,
-                                        dask='parallelized',
-                                        output_dtypes=[DTYPE]
-                                        ).rename('scaling_pearsonr')
+                                        # dask='parallelized',
+                                        output_dtypes=[DTYPE, DTYPE]
+                                        )
+        rvalue.name = 'scaling_pearson_rvalue'
+        pvalue.name = 'scaling_pearson_pvalue'
         scaling_spearmanr = xr.apply_ufunc(spearmanr,
                                         ds_sel['location'], ds_sel['scale'],
                                         input_core_dims=[['duration'], ['duration']],
@@ -477,7 +482,8 @@ def step4_scaling_correlation(ds):
         scaling_student_t = ttest_res[0].rename('scaling_student_t')
         scaling_student_pvalue = ttest_res[1].rename('scaling_student_pvalue')
         # Group all DataArrays in a single dataset
-        ds_fit = xr.merge([scaling_pearsonr, scaling_spearmanr,
+        ds_fit = xr.merge([rvalue, pvalue,
+                           scaling_spearmanr,
                            scaling_student_t, scaling_student_pvalue])
         # Keep the the results in their own dimension
         ds_fit = ds_fit.expand_dims('scaling_extent')
@@ -539,10 +545,10 @@ def main():
         # hourly2 = xr.open_zarr(hourly_path2)
         # hourly = set_attrs(xr.concat([hourly1, hourly2], dim='time')).chunk(HOURLY_CHUNKS)#.loc[EXTRACT]
         # hourly = xr.open_zarr(hourly_path1)
-        print(hourly1)
+        # print(hourly1)
 
         # Get annual maxima #
-        # annual_maxs = step1_annual_maxs_of_roll_mean(hourly1, 'prcp_amt', 'end_time', DURATIONS_ALL, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
+        annual_maxs = step1_annual_maxs_of_roll_mean(hourly1, 'prcp_amt', 'end_time', DURATIONS_ALL, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
         # annual_maxs = step1_annual_maxs_of_roll_mean(hourly, 'precipitation', 'time', DURATIONS_DAILY, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
         # amax_path = os.path.join(DATA_DIR, ANNUAL_FILE)
         # amax_path2 = os.path.join(DATA_DIR, ANNUAL_FILE2)
@@ -552,7 +558,7 @@ def main():
         # annual_maxs.to_dataset().to_netcdf(amax_path, mode='w')
 
         # fit Gumbel #
-        # ds_fitted = step2_fit_gumbel(annual_maxs)#.chunk(ANNUAL_CHUNKS)
+        ds_fitted = step2_fit_gumbel(annual_maxs)#.chunk(ANNUAL_CHUNKS)
         # print(ds_fitted)
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
@@ -563,8 +569,7 @@ def main():
         # fit parameters scaling #
         # ds_fitted = xr.open_zarr(gumbel_path)#.loc[EXTRACT]
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # ds_scaled = step3_scaling(ds_fitted)
-        # print(ds_scaled.load())
+        ds_scaled = step3_scaling(ds_fitted).load()
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_scaled.data_vars.keys()}
@@ -572,18 +577,18 @@ def main():
 
         # ds_fitted = xr.open_zarr(gradient_path)
         # logger(["start correlation computation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # ds_scaled = step4_scaling_correlation(ds_scaled)#.chunk(ANNUAL_CHUNKS)
+        ds_scaled = step4_scaling_correlation(ds_scaled)#.chunk(ANNUAL_CHUNKS)
         # print(ds_scaled.load())
         # print(ds_scaled['ks'].load().quantile([0.95,0.99,0.999], dim=['duration', 'latitude', 'longitude']))
         # print(ds_scaled['location'].load().std(dim=['duration', 'latitude', 'longitude']))
 
         # logger(["start writing correlation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_SCALING)
+        scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_SCALING)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_scaled.data_vars.keys()}
         # ds_scaled.to_zarr(scaling_path, mode='w', encoding=encoding)
         # print(ds_fitted.load())
-        # ds_scaled.to_netcdf(scaling_path)
-        # print(ds_scaled.compute())
+        ds_scaled.to_netcdf(scaling_path)
+        print(ds_scaled.compute())
         # print((~np.isfinite(ds_fitted)).sum().compute())
         # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
 
@@ -612,24 +617,24 @@ def main():
 
 
         # combine all A2 files
-        a2_path = os.path.join(DATA_DIR, 'era5_2000-2017_precip_a2_*.nc')
-        ds_a2 = xr.open_mfdataset(a2_path, concat_dim='duration')
-        da_a2 = ds_a2.reindex(duration=sorted(ds_a2.duration))['A2']
+        # a2_path = os.path.join(DATA_DIR, 'era5_2000-2017_precip_a2_*.nc')
+        # ds_a2 = xr.open_mfdataset(a2_path, concat_dim='duration')
+        # da_a2 = ds_a2.reindex(duration=sorted(ds_a2.duration))['A2']
         # Open 
-        ds_era = xr.open_zarr(os.path.join(DATA_DIR, 'era5_2000-2017_precip_renamed_rvalue.zarr'))
+        # ds_era = xr.open_zarr(os.path.join(DATA_DIR, 'era5_2000-2017_precip_renamed_rvalue.zarr'))
         # Get the critical values
-        _, crit_val, sig_levels = scipy.stats.anderson(ds_era['year'],
-                                                       dist='gumbel_r')
-        da_crit_val = xr.DataArray(crit_val, name='A2_crit',
-                                   coords=[sig_levels],
-                                   dims=['significance_level'])
+        # _, crit_val, sig_levels = scipy.stats.anderson(ds_era['year'],
+        #                                                dist='gumbel_r')
+        # da_crit_val = xr.DataArray(crit_val, name='A2_crit',
+        #                            coords=[sig_levels],
+        #                            dims=['significance_level'])
         # Add those dataArray to the main dataset
-        ds_era = xr.merge([ds_era, da_a2, da_crit_val]).chunk(ANNUAL_CHUNKS)
-        print(ds_era)
+        # ds_era = xr.merge([ds_era, da_a2, da_crit_val]).chunk(ANNUAL_CHUNKS)
+        # print(ds_era)
         # Save to zarr
-        encoding = {v: GEN_FLOAT_ENCODING for v in ds_era.data_vars.keys()}
-        ds_era.to_zarr(os.path.join(DATA_DIR, 'era5_2000-2017_precip_complete.zarr'),
-                            mode='w', encoding=encoding)
+        # encoding = {v: GEN_FLOAT_ENCODING for v in ds_era.data_vars.keys()}
+        # ds_era.to_zarr(os.path.join(DATA_DIR, 'era5_2000-2017_precip_complete.zarr'),
+        #                     mode='w', encoding=encoding)
 
 
 if __name__ == "__main__":
