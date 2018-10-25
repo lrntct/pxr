@@ -18,24 +18,17 @@ import statsmodels.api as sm
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
 # DATA_DIR = '../data/MIDAS/'
-# HOURLY_FILE1 = 'midas_2000-2017_precip_select.zarr'
+HOURLY_FILE1 = 'midas_2000-2017_precip_pairs.nc'
 # HOURLY_FILE2 = 'era5_2013-2017_precip.zarr'
 
 # ANNUAL_FILE = 'midas_2000-2017_precip_annual_max.nc'
 # ANNUAL_FILE2 = 'era5_2013-2017_precip_annual_max.zarr'
 # ANNUAL_FILE_GUMBEL = 'era5_2000-2017_precip_gumbel.zarr'
 # ANNUAL_FILE_GRADIENT = 'era5_2000-2017_precip_gradient.zarr'
-ANNUAL_FILE_SCALING = 'era5_2000-2017_precip_scaling.zarr'
+ANNUAL_FILE_SCALING = 'midas_2000-2017_precip_pairs_scaling.nc'
 
 LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
 
-# Annual max from Rob
-KAMPALA_AMS = '/home/lunet/gylc4/Sync/papers/global rainfall freq analysis/data/rob_kampala.csv'
-KISUMU_AMS = '/home/lunet/gylc4/Sync/papers/global rainfall freq analysis/data/rob_kisumu.csv'
-
-# Coordinates of study sites
-KAMPALA_COORD = (0.317, 32.616)
-KISUMU_COORD = (0.1, 34.75)
 # Extract
 # EXTRACT = dict(latitude=slice(1.0, -0.25),
 #                longitude=slice(32.5, 35))
@@ -446,8 +439,6 @@ def adhoc_AD(annual_max):
         da_a2.to_dataset().to_netcdf(out_path)
 
 
-
-
 def step4_scaling_correlation(ds):
     """Compare the scaling gradients using:
     Pearson's r
@@ -527,29 +518,6 @@ def benchmark(ds):
     print({k:v for k, v in zip(sizes_sq, dur_sec)})
 
 
-def amax_rob():
-    """read a list of CSV.
-    return a dataArray of annual maxima
-    """
-    arr_list = []
-    for fpath, sname in [(KISUMU_AMS, 'kisumu'), (KAMPALA_AMS, 'kampala')]:
-        df = pd.read_csv(fpath, index_col='year')
-        # print(df)
-        ds = df.to_xarray()
-        annual_maxs = []
-        for var_name in ds.data_vars:
-            annual_max = ds[var_name]
-            annual_max.name = 'annual_max'
-            da = annual_max.expand_dims('duration')
-            da.coords['duration'] = [int(var_name)*24]
-            annual_maxs.append(da)
-        da_site = xr.concat(annual_maxs, 'duration')
-        da_site = da_site.expand_dims('site')
-        da_site.coords['site'] = [sname]
-        arr_list.append(da_site)
-    return xr.concat(arr_list, 'site')
-
-
 def logger(fields):
     log_file_path = os.path.join(DATA_DIR, LOG_FILENAME)
     with open(log_file_path, mode='a') as log_file:
@@ -565,13 +533,13 @@ def main():
         start_time = datetime.now()
         # Load hourly data #
         # logger(['start computing annual maxima', str(start_time), 0])
-        # hourly_path1 = os.path.join(DATA_DIR, HOURLY_FILE1)
+        hourly_path1 = os.path.join(DATA_DIR, HOURLY_FILE1)
         # hourly_path2 = os.path.join(DATA_DIR, HOURLY_FILE2)
-        # hourly1 = xr.open_zarr(hourly_path1)#.chunk(HOURLY_CHUNKS).loc[EXTRACT]
+        hourly1 = xr.open_dataset(hourly_path1)#.chunk(HOURLY_CHUNKS).loc[EXTRACT]
         # hourly2 = xr.open_zarr(hourly_path2)
         # hourly = set_attrs(xr.concat([hourly1, hourly2], dim='time')).chunk(HOURLY_CHUNKS)#.loc[EXTRACT]
         # hourly = xr.open_zarr(hourly_path1)
-        # print(hourly)
+        print(hourly1)
 
         # Get annual maxima #
         # annual_maxs = step1_annual_maxs_of_roll_mean(hourly1, 'prcp_amt', 'end_time', DURATIONS_ALL, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
