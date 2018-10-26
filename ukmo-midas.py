@@ -26,6 +26,7 @@ STATIONS_DIR = os.path.join(BASE_DIR, 'stations')
 STATIONS_LIST = os.path.join(BASE_DIR, 'src_id_list.xls')
 OUT_FILE = '/home/lunet/gylc4/geodata/MIDAS/midas_precip_1950-2017.zarr'
 SELECT_FILE = '../data/MIDAS/midas_2000-2017_precip_select.zarr'
+PAIR_FILE = '../data/MIDAS/midas_2000-2017_precip_pairs.nc'
 
 # https://www.metoffice.gov.uk/public/weather/climate-extremes/#?tab=climateExtremes
 UK_HOURLY_MAX = 92.0
@@ -59,9 +60,9 @@ GEN_FLOAT_ENCODING = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clev
 #             'longitude': {'dtype': DTYPE}}
 
 # Stations inside an ERA5 cell
-station_pairs = [('SALSBURGH', 'DRUMALBIN')
-                 ('LEEMING', 'TOPCLIFFE')
-                 ('LARKHILL', 'BOSCOMBE DOWN')
+STATION_PAIRS = [('SALSBURGH', 'DRUMALBIN'),
+                 ('LEEMING', 'TOPCLIFFE'),
+                 ('LARKHILL', 'BOSCOMBE DOWN'),
                  ('HEATHROW', 'NORTHOLT')]
 
 
@@ -224,6 +225,34 @@ def to_gdf(ds):
     return gdf
 
 
+def station_pairs(ds):
+    sel_stations_names = [n for t in STATION_PAIRS for n in t]
+    print(sel_stations_names)
+    ds.coords['station'] = ds['src_name']
+    all_stations_name = [n.decode('utf8') for n in ds.coords['station'].values]
+
+    p_mean_list = []
+    for s1, s2 in STATION_PAIRS:
+        # boolean array of the selected stations as true
+        arr_stations_sel = np.isin(all_stations_name, [s1, s2])
+        # Indices of the selected stations
+        station_sel_idx = np.where(arr_stations_sel)[0]
+        # select the two stations
+        ds_pair = ds.isel(station=station_sel_idx.tolist())
+        # Create name of the pair
+        station_pair_names = [b.decode('utf8') for b in ds_pair['station'].values]
+        pair_name = '--'.join(station_pair_names)
+        # Calculate P mean of the pair
+        prcp_mean = ds_pair['prcp_amt'].mean(dim='station')
+        # Keep the mean in a new dimension
+        prcp_mean = prcp_mean.expand_dims('pair')
+        prcp_mean.coords['pair'] = [pair_name]
+
+        p_mean_list.append(prcp_mean)
+    prcp_mean_all = xr.concat(p_mean_list, dim='pair')
+    return prcp_mean_all.to_dataset()
+
+
 def main():
     with ProgressBar():
         # print(df.head())
@@ -244,10 +273,14 @@ def main():
         # ds_sel.load().to_zarr(SELECT_FILE, mode='w')
 
         ds_sel = xr.open_zarr(SELECT_FILE)
-        gdf = to_gdf(ds_sel)
-        out_path = os.path.join('../data/MIDAS', "midas.gpkg")
-        gdf.to_file(out_path, driver="GPKG")
+        # gdf = to_gdf(ds_sel)
+        # out_path = os.path.join('../data/MIDAS', "midas.gpkg")
+        # gdf.to_file(out_path, driver="GPKG")
         # print(ds_sel.max().load())
+
+        ds_pairs = station_pairs(ds_sel)
+        ds_pairs.load().to_netcdf(PAIR_FILE, mode='w')
+
 
 
 if __name__ == "__main__":
