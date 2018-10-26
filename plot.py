@@ -26,6 +26,7 @@ ERA_ANNUAL_FILE = 'era5_2000-2017_precip_complete.zarr'
 # GAUGES_FILE = '../data/GHCN/ghcn.nc'
 # GHCN_ANNUAL_FILE = '../data/GHCN/ghcn_2000-2017_precip_scaling.nc'
 MIDAS_ANNUAL_FILE = '../data/MIDAS/midas_2000-2017_precip_scaling.nc'
+MIDAS_PAIRS = '../data/MIDAS/midas_2000-2017_precip_pairs_scaling.nc'
 # HADISD_ANNUAL_FILE = '../data/HadISD/hadisd_2000-2017_precip_scaling.nc'
 PLOT_DIR = '../plot'
 
@@ -48,11 +49,21 @@ STUDY_SITES = {'Jakarta': (-6.2, 106.816), 'Sydney': (-33.865, 151.209),
 
 XTICKS = [1, 3, 6, 12, 24, 48, 120, 360]
 
-# color-blind safe qualitative palette from colorbrewer2
+# color-blind safe qualitative palette from colorbrewer2 (paired)
 C_PRIMARY_1 = '#1f78b4'
 C_SECONDARY_1 = '#6ba9ca'
 C_PRIMARY_2 = '#33a02c'
 C_SECONDARY_2 = '#89c653'
+
+
+def convert_lon(longitude):
+    """convert negative longitude into 360 longitude
+    """
+    if longitude < 0:
+        return longitude + 360
+    else:
+        return longitude
+
 
 def single_map(da, cbar_label, title, fig_name, center=None, reverse=False):
     """https://cbrownley.wordpress.com/2018/05/15/visualizing-global-land-temperatures-in-python-with-scrapy-xarray-and-cartopy/
@@ -121,7 +132,7 @@ def get_site_list(ds, name_col, use_only=None):
                               ds['latitude'].values,
                               ds['longitude'].values):
         if name in use_only:
-            sites[name] = (lat, lon)
+            sites[name] = (lat, convert_lon(lon))
     return sites
 
 
@@ -147,7 +158,7 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
         if ds_cont:
             for ds_name, ds in ds_cont.items():
                 ds_cont_extract = (ds.sel(latitude=site_coord[0],
-                                          longitude=site_coord[1],
+                                          longitude=convert_lon(site_coord[1]),
                                           method='nearest')
                                     .drop(drop_coords)
                                     [keep_vars])
@@ -174,8 +185,6 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
     ds_all = xr.concat(ds_site_list, dim='station')
     # Calculate regression lines
     for p in ['location', 'scale']:
-        # ref_D = 6
-        # ref_param = ds_all[p].sel(duration=ref_D)
         dur = ds_all['duration']
         slope = ds_all['{}_line_slope'.format(p)]
         intercept = ds_all['{}_line_intercept'.format(p)]
@@ -186,36 +195,51 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
     return ds_all
 
 
-def ds_to_df(ds):
+def ds_to_df(ds, station_coord):
     # Create a dict of Pandas DF {'site': DF} with the df col prefixed with the source
     dict_df = {}
-    for station in ds['station'].values:
+    for station in ds[station_coord].values:
         df_list = []
         for source in ds['source'].values:
             # get scale and location
-            ds_extract = ds.sel(station=station,
-                                source=source,
-                                scaling_extent=ds['scaling_extent'].values[0])
+            locator = {station_coord: station,
+                       'source': source,
+                       'scaling_extent': ds['scaling_extent'].values[0]}
+            ds_extract = ds.sel(**locator)
             df = ds_extract.to_dataframe()
-            drop_list = ['station', 'source', 'scaling_extent',
+            drop_list = [station_coord, 'source', 'scaling_extent',
                         'location_line_slope', 'scale_line_slope',
+                         'location_line_intercept', 'scale_line_intercept',
                         'scaling_ratio', 'location_lr', 'scale_lr']
-            df.drop(drop_list, axis=1, inplace=True)
+            for d in drop_list:
+                try:
+                    df.drop(d, axis=1, inplace=True)
+                except KeyError:
+                    pass
             rename_rules = {'location': '{}_location'.format(source),
                             'scale': '{}_scale'.format(source)}
             df.rename(columns=rename_rules, inplace=True)
             df_list.append(df)
             # Get regression lines
             for scaling_extent in ds['scaling_extent'].values:
-                extent = scaling_extent.decode("utf-8")
-                ds_extract2 = ds.sel(station=station,
-                                         source=source,
-                                         scaling_extent=scaling_extent)
+                try:
+                    extent = scaling_extent.decode("utf-8")
+                except AttributeError:
+                    extent = scaling_extent
+                locator = {station_coord: station,
+                           'source': source,
+                           'scaling_extent': scaling_extent}
+                ds_extract2 = ds.sel(**locator)
                 df2 = ds_extract2.to_dataframe()
-                drop_list = ['station', 'source', 'scaling_extent',
+                drop_list = [station_coord, 'source', 'scaling_extent',
                             'location_line_slope', 'scale_line_slope',
+                            'location_line_intercept', 'scale_line_intercept',
                             'scaling_ratio', 'location', 'scale']
-                df2.drop(drop_list, axis=1, inplace=True)
+                for d in drop_list:
+                    try:
+                        df2.drop(d, axis=1, inplace=True)
+                    except KeyError:
+                        pass
                 rename_rules = {
                     'location_lr': '{}_location_lr_{}'.format(source, extent),
                     'scale_lr': '{}_scale_lr_{}'.format(source, extent)
@@ -685,19 +709,20 @@ def plot_scaling_differences(param, df_list, ax):
     param_symbols = {'location': '\mu_d', 'scale': '\sigma_d'}
     gradient_symbols = {'location': '\\alpha', 'scale': '\\beta'}
     intercept_symbols = {'location': 'a', 'scale': 'b'}
+    colors = {'ERA5': C_PRIMARY_1, 'MIDAS': C_PRIMARY_2}
 
-    for (source, df), color in zip(df_list, [C_PRIMARY_1, C_PRIMARY_2]):
+    for source, df in df_list:
         quantiles = df.columns.values
         q_min = quantiles[0]
         q_max = quantiles[-1]
         title = '{} ${}$'.format(param.title(), param_symbols[param])
         fill_label = '{} Q{} to Q{}'.format(source, int(q_min*100), int(q_max*100))
         df[0.5].plot(logx=True, logy=False, ax=ax,
-                        linewidth=1, color=color, zorder=10,
+                        linewidth=1, color=colors[source], zorder=10,
                     #  title=title,
                         label='{} median'.format(source))
         ax.fill_between(df.index, df[q_min], df[q_max],
-                        facecolor=color, alpha=0.2, zorder=1,
+                        facecolor=colors[source], alpha=0.2, zorder=1,
                         label=fill_label)
     ax.axhline(0, linewidth=0.1, color='0.5')
     ax.axvline(24, linewidth=0.1, color='0.5')
@@ -758,11 +783,156 @@ def station_permut(ds):
     print(len(combinations))
 
 
+def prepare_midas_mean(ds_era, ds_midas, ds_midas_mean):
+    scaling_coeffs = ['location_line_slope', 'scale_line_slope',
+                      'location_line_intercept', 'scale_line_intercept']
+    keep_vars = ['location', 'scale'] + scaling_coeffs
+    # convert station names to UTF8
+    names_str = np.array([b.decode('utf8') for b in ds_midas['src_name'].values])
+    ds_midas['src_name'].values = names_str
+    # Set station coordinates to station name
+    ds_midas.coords['station'] = ds_midas['src_name']
+    ds_midas = ds_midas.drop('src_name')
+
+    # Create a {pair_name: {source: ds}}
+    ds_list = []
+    for pair_name in ds_midas_mean['pair']:
+        pair_name = str(pair_name.values)
+        ds_pair_list = []
+        # Find MIDAS stations in pairs
+        for i, s in enumerate(pair_name.split('--')):
+            site_num = i+1
+            ds_s = ds_midas[keep_vars].sel(station=s, drop=True)
+            site_lat = ds_s['latitude'].values
+            site_lon = convert_lon(ds_s['longitude'].values)
+            # Add a source coordinate
+            ds_s = ds_s.expand_dims(['source', 'pair'])
+            ds_s.coords['source'] = ['MIDAS s'+str(site_num)]
+            ds_s.coords['pair'] = [pair_name]
+            ds_pair_list.append(ds_s.drop(['latitude', 'longitude']))
+
+        # add the source dim to the other two datasets
+        ds_mean = ds_midas_mean[keep_vars].sel(pair=pair_name)
+        ds_mean = ds_mean.expand_dims(['source', 'pair'])
+        ds_mean.coords['source'] = ['MIDAS mean']
+        ds_pair_list.append(ds_mean)
+        ds_era_extract = ds_era[keep_vars].sel(latitude=site_lat,
+                                               longitude=site_lon,
+                                               method='nearest', drop=True)
+        ds_era_extract.coords['scaling_extent'] = ds_mean['scaling_extent']
+        ds_era_extract = ds_era_extract.expand_dims(['source', 'pair'])
+        ds_era_extract.coords['source'] = ['ERA5']
+        ds_era_extract.coords['pair'] = [pair_name]
+        ds_pair_list.append(ds_era_extract)
+
+        # Join all ds of the cell in a single dataset
+        ds_site = xr.concat(ds_pair_list, dim='source')
+        ds_list.append(ds_site)
+
+    # Join all along the pair coordinate
+    ds_all = xr.concat(ds_list, dim='pair')
+    # Calculate regression lines
+    for p in ['location', 'scale']:
+        dur = ds_all['duration']
+        slope = ds_all['{}_line_slope'.format(p)]
+        intercept = ds_all['{}_line_intercept'.format(p)]
+        linereg_var = '{}_lr'.format(p)
+        ds_all[linereg_var] = (10**intercept) * dur**slope
+    return ds_all
+
+
+def fig_midas_mean(ds_pairs, fig_name):
+    dict_df = ds_to_df(ds_pairs, 'pair')
+    # # From seaborn colorblind
+    # C = ['#0173b2', '#de8f05', '#029e73', '#cc78bc']
+    C = {'ERA5': C_PRIMARY_1, 'MIDAS mean': C_PRIMARY_2,
+         'MIDAS s1': 'grey','MIDAS s2': 'grey'}
+    M = {'ERA5': 'o', 'MIDAS mean': 'v',
+         'MIDAS s1': 'x','MIDAS s2': 'x'}
+    # MS = {'ERA5': 4, 'MIDAS mean': 5,
+    #       'MIDAS s1': 2,'MIDAS s2': 2}
+
+    linesyles = {
+        '{}_{}': dict(linestyle='None', linewidth=0, marker='o', markersize=4,
+                      label='{}'),
+        # '{}_{}_lr_all': dict(linestyle='dashed', linewidth=1.5, marker=None, markersize=0,
+        #                      label='{} (all)'),
+        '{}_{}_lr_daily': dict(linestyle='-', linewidth=1., marker=None, markersize=0,
+                               label='{} (daily)'),
+    }
+
+    col_num = 2
+    row_num = len(dict_df)
+    fig_size = (4*col_num, 2.5*row_num)
+    # fig = plt.figure(figsize=fig_size)
+    # ax_num = 1
+    fig, axes = plt.subplots(row_num, col_num, figsize=fig_size,
+                             sharey='col', sharex=True)
+    for row_num, ((pair_name, df), ax_row) in enumerate(zip(dict_df.items(), axes)):
+        print(pair_name)
+        for param_name, ax in zip(['location', 'scale'], ax_row):
+            for source in ds_pairs['source'].values:
+                for col_base, style in linesyles.items():
+                    col = col_base.format(source, param_name)
+                    if source.startswith('MIDAS s'):
+                        if 'lr' in col:
+                            linestyle = 'dashed'
+                            marker = None
+                            markersize = None
+                            if source == 'MIDAS s1':
+                                label = 'MIDAS station (daily)'
+                            else:
+                                label = ''
+                        else:
+                            linestyle = 'none'
+                            marker = 'x'
+                            linewidth = .5
+                            markersize = 2
+                            if source == 'MIDAS s1':
+                                label = 'MIDAS station'
+                            else:
+                                label = ''
+                    else:
+                        linestyle = style['linestyle']
+                        linewidth = style['linewidth']
+                        marker = M[source]
+                        markersize = style['markersize']
+                        label = style['label'].format(source)
+                    df[col].plot(ax=ax, label=label,
+                                loglog=True,
+                                linestyle=linestyle, linewidth=linewidth,
+                                markersize=markersize, marker=marker,
+                                color=C[source])
+                    # except KeyError:
+                    #     continue
+
+            if row_num == 0:
+                ax.set_title(param_name)
+            if param_name == 'location':
+                ax.set_ylabel(r'{}'.format(pair_name))
+            lines, labels = ax.get_legend_handles_labels()
+            ax.set_xlabel('$d$ (hours)')
+
+    # set ticks
+    for ax in axes.flat:
+        ax.set_xticks(XTICKS)
+        ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+
+
+
+    lgd = fig.legend(lines, labels, loc='lower center', ncol=3)
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=.12, wspace=None, hspace=None)
+    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.close()
+
+
 def main():
-    ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_ANNUAL_FILE)).sel(gumbel_fit=b'scipy')
-    ds_midas = xr.open_dataset(MIDAS_ANNUAL_FILE).sel(gumbel_fit='scipy')
+    ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_ANNUAL_FILE)).sel(gumbel_fit=b'scipy', drop=True)
+    ds_midas = xr.open_dataset(MIDAS_ANNUAL_FILE).sel(gumbel_fit='scipy', drop=True)
+    ds_midas_pairs = xr.open_dataset(MIDAS_PAIRS).sel(gumbel_fit='scipy', drop=True)
     # print(ds_era.latitude.load())
-    # print(ds_midas)
+    # print(ds_midas_pairs)
     # station_permut(ds_midas)
 
 
@@ -781,7 +951,10 @@ def main():
     # fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)
 
-    fig_gauges_map('midas_gauges_map.pdf')
+    ds_pairs = prepare_midas_mean(ds_era, ds_midas, ds_midas_pairs)
+    fig_midas_mean(ds_pairs, 'midas_mean.pdf')
+
+    # fig_gauges_map('midas_gauges_map.pdf')
 
     # fig_map_anderson(ds_era)
     # ds_ghcn = xr.open_dataset(GHCN_ANNUAL_FILE)
@@ -797,8 +970,8 @@ def main():
     # ds_annual_ghcn = xr.open_zarr(GAUGES_ANNUAL_FILE)
     # print(ds_annual_gauges.load())
     # print(ds_annual_midas.load())
-    # plot_gauges_map(ds_annual_midas, 'src_name', 'midas_gauges_map.pdf', global_extent=False)
-    # plot_gauges_map(ds_ghcn, 'name', 'ghcn_gauges_map.pdf', global_extent=True)
+    # plot_gauges_map_from_ds(ds_annual_midas, 'src_name', 'midas_gauges_map.pdf', global_extent=False)
+    # plot_gauges_map_from_ds(ds_ghcn, 'name', 'ghcn_gauges_map.pdf', global_extent=True)
     # plot_gauges_data(ds_ghcn, 2000, 2012 'gauges.png')
 
     # print((~np.isfinite(ds)).sum().compute())
