@@ -18,23 +18,27 @@ PXR2 = f"pxr2-{metadata['common']['version']}.nc"
 PXR4 = f"pxr4-{metadata['common']['version']}.nc"
 
 
+def apply_common_metadata(ds):
+    ds.attrs.update(metadata['common'])
+    ds.attrs['date'] = str(datetime.datetime.utcnow().date())
+    for coordinate in ds.coords:
+        try:
+            ds.coords[coordinate].attrs.update(metadata['coords'][coordinate])
+        except KeyError:
+            pass
+    for var in ds.data_vars:
+        try:
+            ds.data_vars[var].attrs.update(metadata['data_vars'][var])
+        except KeyError:
+            pass
+
+
 def gen_pxr2(ds_source):
     # Select the relevant variables
     ds_pxr2 = ds_source[['location', 'scale', 'A2', 'A2_crit']]
-    # Dataset description
-    ds_pxr2.attrs.update(metadata['common'])
+    # Metadata
+    apply_common_metadata(ds_pxr2)
     ds_pxr2.attrs.update(metadata['pxr2'])
-
-    for coordinate in ds_pxr2.coords:
-        try:
-            ds_pxr2.coords[coordinate].attrs.update(metadata['coords'][coordinate])
-        except KeyError:
-            pass
-    for var in ds_pxr2.data_vars:
-        try:
-            ds_pxr2.data_vars[var].attrs.update(metadata['data_vars'][var])
-        except KeyError:
-            pass
     return ds_pxr2
 
 
@@ -52,32 +56,37 @@ def gen_pxr4(ds_source):
     rename_dict = {'location_line_slope': 'alpha',
                    'scale_line_slope': 'beta'}
     ds_pxr4.rename(rename_dict, inplace=True)
-    # Dataset description
-    ds_pxr4.attrs.update(metadata['common'])
+    # Metadata
+    apply_common_metadata(ds_pxr4)
     ds_pxr4.attrs.update(metadata['pxr4'])
-
-    for coordinate in ds_pxr4.coords:
-        try:
-            ds_pxr4.coords[coordinate].attrs.update(metadata['coords'][coordinate])
-        except KeyError:
-            pass
-    for var in ds_pxr4.data_vars:
-        try:
-            ds_pxr4.data_vars[var].attrs.update(metadata['data_vars'][var])
-        except KeyError:
-            pass
     return ds_pxr4
+
+
+def write_datasets(ds_source):
+    ds_pxr2 = gen_pxr2(ds_source)
+    ds_pxr2.to_netcdf(os.path.join(DATA_DIR, PXR2))
+    ds_pxr4 = gen_pxr4(ds_source)
+    ds_pxr4.to_netcdf(os.path.join(DATA_DIR, PXR4))
+
+
+def test_datasets():
+    pxr2 = xr.open_dataset(os.path.join(DATA_DIR, PXR2))
+    for file_name in [PXR2, PXR4]:
+        ds = xr.open_dataset(os.path.join(DATA_DIR, file_name))
+        print(ds)
+        for coordinate in ds.coords:
+            print(ds.coords[coordinate])
+        for var in ds.data_vars:
+            print(ds.data_vars[var])
 
 
 def main():
     source_path = os.path.join(DATA_DIR, SOURCE)
     ds_source = xr.open_zarr(source_path).sel(gumbel_fit=b'scipy', scaling_extent=b'all', drop=True)
-    print(ds_source)
-    ds_pxr2 = gen_pxr2(ds_source)
-    ds_pxr2.to_netcdf(os.path.join(DATA_DIR, PXR2))
-    ds_pxr4 = gen_pxr4(ds_source)
-    print(ds_pxr4)
-    ds_pxr4.to_netcdf(os.path.join(DATA_DIR, PXR4))
+    write_datasets(ds_source)
+    test_datasets()
+
+
 
 
 if __name__ == "__main__":
