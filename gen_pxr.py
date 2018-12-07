@@ -74,7 +74,7 @@ def main():
     ds_source = xr.open_zarr(source_path).sel(gumbel_fit=b'scipy', scaling_extent=b'all', drop=True)
     print(ds_source)
     ds_pxr2 = gen_pxr2(ds_source)
-    # ds_pxr2.to_netcdf(os.path.join(DATA_DIR, PXR2))
+    ds_pxr2.to_netcdf(os.path.join(DATA_DIR, PXR2))
     ds_pxr4 = gen_pxr4(ds_source)
     print(ds_pxr4)
     ds_pxr4.to_netcdf(os.path.join(DATA_DIR, PXR4))

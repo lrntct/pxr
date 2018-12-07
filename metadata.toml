@@ -1,5 +1,6 @@
 common.version = '1.0.0'
 common.institution = "Department of Geography and Environment, Loughborough University"
+common.authors = "Laurent G. Courty, John K. Hillier, Louise J. Slater and Rob L. Wilby"
 common.source = "Generated using ERA5 from Copernicus Climate Change Service information 2018"
 common.references = "https://doi.org/10.5281/zenodo.1467859"
 common.license = "ODC Open Database License (ODbL) v1.0"
