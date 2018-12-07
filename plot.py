@@ -89,7 +89,7 @@ def single_map(da, cbar_label, title, fig_name, center=None, reverse=False):
     plt.close()
 
 
-def multi_maps(ds, var_names, disp_names, value_name, fig_name, duration=24, sqr=False):
+def multi_maps(ds, var_names, disp_names, value_name, fig_name, duration=24, sqr=False, center=None, reverse=False):
     crs = ctpy.crs.Robinson()
     sel = ds.loc[{'duration': duration}]
     # reshape variables as dimension
@@ -103,13 +103,27 @@ def multi_maps(ds, var_names, disp_names, value_name, fig_name, duration=24, sqr
         da_list.append(da_sel)
     da = xr.concat(da_list, 'param')
     da.attrs['long_name'] = value_name  # Color bar title
+
     # Actual plot
-    p = da.plot(col='param', col_wrap=1,
-                transform=ctpy.crs.PlateCarree(),
-                aspect=ds.dims['longitude'] / ds.dims['latitude'],
-                cmap='viridis', robust=True, extend='both',
-                subplot_kws=dict(projection=crs)
-                )
+    aspect = ds.dims['longitude'] / ds.dims['latitude']
+    if center:
+        if reverse:
+            cmap = 'RdBu_r'
+        else:
+            cmap = 'RdBu'
+        p = da.plot(col='param', col_wrap=1,
+                    transform=ctpy.crs.PlateCarree(), aspect=aspect,
+                    cmap=cmap, center=center,
+                    robust=True, extend='both',
+                    subplot_kws=dict(projection=crs)
+                    )
+    else:
+        p = da.plot(col='param', col_wrap=1,
+                    transform=ctpy.crs.PlateCarree(), aspect=aspect,
+                    cmap='viridis',
+                    robust=True, extend='both',
+                    subplot_kws=dict(projection=crs)
+                    )
     for ax, disp_name in zip(p.axes.flat, disp_names):
         ax.coastlines(linewidth=.5, color='black')
         ax.set_title(disp_name)
@@ -669,13 +683,14 @@ def fig_scaling_differences_all(ds_era, ds_midas):
     fig, axes = plt.subplots(row_num, col_num, figsize=(6, 3),
                              sharey='row', sharex=True)
 
+    ylim = {'location': [-0.25, 0.75], 'scale': [-0.6, 1.1]}
     # param in rows, extent in columns
     for row_num, (param, ax_row) in enumerate(zip(['location', 'scale'], axes)):
         for extent, ax in zip(q_extent_dict, ax_row):
             df_list = [i['df_list'] for i in q_list
                         if i['extent'] == extent
                         and i['param'] == param][0]
-            plot_scaling_differences(param, df_list, ax)
+            plot_scaling_differences(param, df_list, ax, ylim=ylim)
             if row_num == 0:
                 ax.set_title(extent)
 
@@ -701,15 +716,15 @@ def fig_scaling_differences_all(ds_era, ds_midas):
     plt.close()
 
 
-def plot_scaling_differences(param, df_list, ax):
+def plot_scaling_differences(param, df_list, ax, ylim=False):
     """
     Plot quantiles of differences
     """
-    ylim = {'location': [-0.25, 0.75], 'scale': [-0.6, 1.1]}
     param_symbols = {'location': '\mu_d', 'scale': '\sigma_d'}
     gradient_symbols = {'location': '\\alpha', 'scale': '\\beta'}
     intercept_symbols = {'location': 'a', 'scale': 'b'}
-    colors = {'ERA5': C_PRIMARY_1, 'MIDAS': C_PRIMARY_2}
+    colors = {'ERA5': C_PRIMARY_1, 'MIDAS': C_PRIMARY_2,
+              'MIDAS mean': C_PRIMARY_2, 'MIDAS stations': 'grey'}
 
     for source, df in df_list:
         quantiles = df.columns.values
@@ -726,7 +741,8 @@ def plot_scaling_differences(param, df_list, ax):
                         label=fill_label)
     ax.axhline(0, linewidth=0.1, color='0.5')
     ax.axvline(24, linewidth=0.1, color='0.5')
-    ax.set_ylim(ylim[param])
+    if ylim:
+        ax.set_ylim(ylim[param])
     # ax.set_yticks([ 0.0, 0.5])
     ax.set_xticks(XTICKS)
     ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
@@ -759,6 +775,21 @@ def fig_scaling_gradients_maps(ds):
                "$\\alpha, \\beta$", 'scaling_gradients_2000-2017_superdaily.png', sqr=False)
 
 
+def fig_scaling_gradients_ratio_maps(ds):
+    """print maps of the ratio between the regression slopes obtain from daily and all durations
+    """
+    ds_daily = ds.sel(scaling_extent=b'daily')
+    ds_all = ds.sel(scaling_extent=b'all')
+    ds['loc_ratio'] = ds_all['location_line_slope'] / ds_daily['location_line_slope']
+    ds['scale_ratio'] = ds_all['scale_line_slope'] / ds_daily['scale_line_slope']
+    multi_maps(ds,
+               var_names=['loc_ratio', 'scale_ratio'],
+               disp_names=['$\\alpha_{all} / \\alpha_{daily}$',
+                           '$\\beta_{all} / \\beta_{daily}$'],
+               value_name="Ratio", fig_name='scaling_gradients_ratio.png',
+               sqr=False, center=.5, reverse=True)
+
+
 def fig_scaling_hexbin(ds):
     hexbin(ds.sel(scaling_extent=b'all'),
            'location_line_slope', 'scale_line_slope',
@@ -784,9 +815,9 @@ def station_permut(ds):
 
 
 def prepare_midas_mean(ds_era, ds_midas, ds_midas_mean):
-    scaling_coeffs = ['location_line_slope', 'scale_line_slope',
-                      'location_line_intercept', 'scale_line_intercept']
-    keep_vars = ['location', 'scale'] + scaling_coeffs
+    keep_vars = ['location', 'scale', 'log_location', 'log_scale',
+                 'location_line_slope', 'scale_line_slope',
+                 'location_line_intercept', 'scale_line_intercept']
     # convert station names to UTF8
     names_str = np.array([b.decode('utf8') for b in ds_midas['src_name'].values])
     ds_midas['src_name'].values = names_str
@@ -794,7 +825,6 @@ def prepare_midas_mean(ds_era, ds_midas, ds_midas_mean):
     ds_midas.coords['station'] = ds_midas['src_name']
     ds_midas = ds_midas.drop('src_name')
 
-    # Create a {pair_name: {source: ds}}
     ds_list = []
     for pair_name in ds_midas_mean['pair']:
         pair_name = str(pair_name.values)
@@ -813,16 +843,17 @@ def prepare_midas_mean(ds_era, ds_midas, ds_midas_mean):
 
         # add the source dim to the other two datasets
         ds_mean = ds_midas_mean[keep_vars].sel(pair=pair_name)
-        ds_mean = ds_mean.expand_dims(['source', 'pair'])
+        ds_mean = ds_mean.expand_dims(['pair', 'source'])
         ds_mean.coords['source'] = ['MIDAS mean']
         ds_pair_list.append(ds_mean)
+
         ds_era_extract = ds_era[keep_vars].sel(latitude=site_lat,
                                                longitude=site_lon,
                                                method='nearest', drop=True)
         ds_era_extract.coords['scaling_extent'] = ds_mean['scaling_extent']
-        ds_era_extract = ds_era_extract.expand_dims(['source', 'pair'])
-        ds_era_extract.coords['source'] = ['ERA5']
+        ds_era_extract = ds_era_extract.expand_dims(['pair', 'source'])
         ds_era_extract.coords['pair'] = [pair_name]
+        ds_era_extract.coords['source'] = ['ERA5']
         ds_pair_list.append(ds_era_extract)
 
         # Join all ds of the cell in a single dataset
@@ -861,16 +892,18 @@ def fig_midas_mean(ds_pairs, fig_name):
                                label='{} (daily)'),
     }
 
+    ax_list = []
     col_num = 2
-    row_num = len(dict_df)
-    fig_size = (4*col_num, 2.5*row_num)
+    row_num = len(dict_df) + 1
+    fig_size = (3.5*col_num, 2.2*row_num)
     # fig = plt.figure(figsize=fig_size)
     # ax_num = 1
     fig, axes = plt.subplots(row_num, col_num, figsize=fig_size,
-                             sharey='col', sharex=True)
-    for row_num, ((pair_name, df), ax_row) in enumerate(zip(dict_df.items(), axes)):
+                             sharey=False, sharex=True)
+    for row_idx, ((pair_name, df), ax_row) in enumerate(zip(dict_df.items(), axes[:-1])):
         print(pair_name)
         for param_name, ax in zip(['location', 'scale'], ax_row):
+            ax_list.append(ax)
             for source in ds_pairs['source'].values:
                 for col_base, style in linesyles.items():
                     col = col_base.format(source, param_name)
@@ -880,7 +913,7 @@ def fig_midas_mean(ds_pairs, fig_name):
                             marker = None
                             markersize = None
                             if source == 'MIDAS s1':
-                                label = 'MIDAS station (daily)'
+                                label = 'MIDAS stations (daily)'
                             else:
                                 label = ''
                         else:
@@ -889,7 +922,7 @@ def fig_midas_mean(ds_pairs, fig_name):
                             linewidth = .5
                             markersize = 2
                             if source == 'MIDAS s1':
-                                label = 'MIDAS station'
+                                label = 'MIDAS stations'
                             else:
                                 label = ''
                     else:
@@ -906,15 +939,40 @@ def fig_midas_mean(ds_pairs, fig_name):
                     # except KeyError:
                     #     continue
 
-            if row_num == 0:
+            if row_idx == 0:
                 ax.set_title(param_name)
             if param_name == 'location':
-                ax.set_ylabel(r'{}'.format(pair_name))
+                ax.set_ylabel('{}'.format(pair_name))
             lines, labels = ax.get_legend_handles_labels()
             ax.set_xlabel('$d$ (hours)')
 
+    ## Difference plot ##
+    # build the dict of ds for calculating quantiles
+    sites_list = []
+    dict_quantiles = {}
+    for s in ds_pairs.source.values:
+        ds_source = ds_pairs.sel(source=s)
+        if str(s).startswith('MIDAS s'):
+            sites_list.append(ds_source)
+        elif str(s).startswith('MIDAS'):
+            dict_quantiles['MIDAS mean'] = (ds_source, ['pair'])
+        elif str(s).startswith('ERA'):
+            dict_quantiles['ERA5'] = (ds_source, ['pair'])
+    ds_stations = xr.concat(sites_list, dim='pair')
+    dict_quantiles['MIDAS stations'] = (ds_stations, ['pair'])
+ 
+    quantiles = [0.01, 0.5, 0.99]
+    q_dict = get_quantile_dict(quantiles, **dict_quantiles)
+
+    # param in rows, extent in columns
+    for param, df_list, ax_diff in zip(['location', 'scale'], q_dict.values(), axes[-1]):
+        # ax_diff = fig.add_subplot(row_num, col_num, ax_num)
+        plot_scaling_differences(param, df_list, ax_diff)
+        # ax_diff.set_title(param)
+        ax_list.append(ax_diff)
+
     # set ticks
-    for ax in axes.flat:
+    for ax in ax_list:
         ax.set_xticks(XTICKS)
         ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
 
@@ -922,7 +980,7 @@ def fig_midas_mean(ds_pairs, fig_name):
 
     lgd = fig.legend(lines, labels, loc='lower center', ncol=3)
     plt.tight_layout()
-    plt.subplots_adjust(bottom=.12, wspace=None, hspace=None)
+    plt.subplots_adjust(bottom=.1, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
     plt.close()
 
@@ -946,13 +1004,14 @@ def main():
     # table_r_sigcount(ds_era, 0.05, dim=['longitude', 'latitude'])
     # table_r_sigcount(ds_era, 0.01, dim=['longitude', 'latitude'])
     # fig_scaling_gradients_maps(ds_era)
+    fig_scaling_gradients_ratio_maps(ds_era)
     # fig_scaling_differences_all(ds_era, ds_midas)
     # fig_maps_r(ds_era)
     # fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)
 
-    ds_pairs = prepare_midas_mean(ds_era, ds_midas, ds_midas_pairs)
-    fig_midas_mean(ds_pairs, 'midas_mean.pdf')
+    # ds_pairs = prepare_midas_mean(ds_era, ds_midas, ds_midas_pairs)
+    # fig_midas_mean(ds_pairs, 'midas_mean.pdf')
 
     # fig_gauges_map('midas_gauges_map.pdf')
 
