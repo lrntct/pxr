@@ -42,6 +42,7 @@ EXTRACT = dict(latitude=slice(45, -45),
 #                'Kisumu': (0.1, 34.75)}
 STUDY_SITES = {'Jakarta': (-6.2, 106.816), 'Sydney': (-33.865, 151.209),
                'Beijing': (39.92, 116.38), 'New Delhi': (28.614, 77.21),
+               'Jeddah': (21.54, 39.173), 'Niamey': (13.512, 2.125),
                'Nairobi': (-1.28, 36.82), 'Brussels': (50.85, 4.35),
                'Santiago': (-33.45, -70.67+360), 'New York City': (40.72, -74.0+360),
                'Mexico City': (19.43, -99.13+360)
@@ -160,8 +161,8 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
                       'location_line_intercept', 'scale_line_intercept',
                       'scaling_ratio']
     keep_vars = ['location', 'scale'] + scaling_coeffs
-    drop_coords = [#'latitude', 'longitude',
-                   'gumbel_fit']
+    # drop_coords = [#'latitude', 'longitude',
+    #                'gumbel_fit']
 
     # Extract sites values from the datasets. combine all ds along a new 'source' dimension
     ds_site_list = []
@@ -174,7 +175,7 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
                 ds_cont_extract = (ds.sel(latitude=site_coord[0],
                                           longitude=convert_lon(site_coord[1]),
                                           method='nearest')
-                                    .drop(drop_coords)
+                                    # .drop(drop_coords)
                                     [keep_vars])
                 ds_cont_extract = ds_cont_extract.load().expand_dims(['station','source'])
                 ds_cont_extract.coords['station'] = [site_name]
@@ -307,10 +308,10 @@ def plot_scaling_per_site(ds, fig_name):
                               color=C_SECONDARY_2, label='$b d^\\beta$ (daily)'),
                 }
 
-    dict_df = ds_to_df(ds)
-    col_num = 2
+    dict_df = ds_to_df(ds, 'station')
+    col_num = 3
     row_num = math.ceil(len(dict_df) / col_num)
-    fig_size = (3.5*col_num, 2*row_num)
+    fig_size = (8, 9)
     fig = plt.figure(figsize=fig_size)
     ax_num = 1
 
@@ -1004,7 +1005,7 @@ def main():
     # table_r_sigcount(ds_era, 0.05, dim=['longitude', 'latitude'])
     # table_r_sigcount(ds_era, 0.01, dim=['longitude', 'latitude'])
     # fig_scaling_gradients_maps(ds_era)
-    fig_scaling_gradients_ratio_maps(ds_era)
+    # fig_scaling_gradients_ratio_maps(ds_era)
     # fig_scaling_differences_all(ds_era, ds_midas)
     # fig_maps_r(ds_era)
     # fig_scaling_ratio_map(ds_era)
@@ -1039,15 +1040,10 @@ def main():
     #                 b'LARKHILL', b'BOSCOMBE DOWN']
     # ds_points = {'MIDAS': (ds_midas.sel(scaling_extent='daily'), 'src_name')}
     # sites_list = get_site_list(ds_midas, 'src_name', use_only=use_stations)
-    # dict_df = prepare_scaling_per_site(sites_list,
-    #                                    ds_cont=ds_cont,
-    #                                    ds_points=ds_points
-    #                                    )
-    # plot_scaling_per_site(dict_df, 'sites_scaling_midas_select_2000-2017_test.pdf')
 
-    # ds_cont = {'ERA5': ds_era.sel(scaling_extent=[b'daily', b'all'])}
-    # ds = combine_ds_per_site(STUDY_SITES, ds_cont=ds_cont, )
-    # plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017.pdf')
+    ds_cont = {'ERA5': ds_era.sel(scaling_extent=[b'daily', b'all'])}
+    ds = combine_ds_per_site(STUDY_SITES, ds_cont=ds_cont)
+    plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017-11sites.pdf')
 
 
 
