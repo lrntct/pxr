@@ -205,8 +205,8 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
         intercept = ds_all['{}_line_intercept'.format(p)]
         linereg_var = '{}_lr'.format(p)
         ds_all[linereg_var] = (10**intercept) * dur**slope
-    print(ds_all.sel(duration=2, station='Jakarta',
-                     scaling_extent=b'daily'))
+    # print(ds_all.sel(duration=2, station='Jakarta',
+    #                  scaling_extent=b'daily'))
     return ds_all
 
 
@@ -299,19 +299,19 @@ def plot_scaling_per_site(ds, fig_name):
         'ERA5_scale': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
                            color=C_SECONDARY_2, label='Scale $\sigma$'),
         'ERA5_location_lr_all': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
-                                 color=C_SECONDARY_1, label='$a d^\\alpha$ (all)'),
+                                 color=C_SECONDARY_1, label='$ad^\\alpha$ (all)'),
         'ERA5_scale_lr_all': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
-                              color=C_SECONDARY_2, label='$b d^\\beta$ (all)'),
+                              color=C_SECONDARY_2, label='$bd^\\beta$ (all)'),
         'ERA5_location_lr_daily': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
-                                 color=C_SECONDARY_1, label='$a d^\\alpha$ (daily)'),
+                                 color=C_SECONDARY_1, label='$ad^\\alpha$ (daily)'),
         'ERA5_scale_lr_daily': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
-                              color=C_SECONDARY_2, label='$b d^\\beta$ (daily)'),
+                              color=C_SECONDARY_2, label='$bd^\\beta$ (daily)'),
                 }
 
     dict_df = ds_to_df(ds, 'station')
     col_num = 3
     row_num = math.ceil(len(dict_df) / col_num)
-    fig_size = (8, 9)
+    fig_size = (7, 7)
     fig = plt.figure(figsize=fig_size)
     ax_num = 1
 
@@ -383,7 +383,7 @@ def plot_scaling_per_site(ds, fig_name):
 
     lgd = fig.legend(lines, labels, loc='lower center', ncol=3)
     plt.tight_layout()
-    plt.subplots_adjust(bottom=.12, wspace=None, hspace=None)
+    plt.subplots_adjust(bottom=.15, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
     plt.close()
 
