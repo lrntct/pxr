@@ -16,6 +16,7 @@ import geopandas as gpd
 import shapely.geometry
 import seaborn as sns
 import cartopy as ctpy
+import scipy.stats
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import matplotlib.pyplot as plt
 
@@ -558,15 +559,15 @@ def fig_map_anderson(ds):
     """create a map of the Anderson-Darling A^2 for Gumbel
     """
     # print(ds)
-    a2_mean = ds['A2'].mean(dim='duration')
+    # a2_mean = ds['A2'].mean(dim='duration')
     a2_crit = ds['A2_crit'].sel(significance_level=1).values
-    print(ds['A2'].where(ds['A2'] > a2_crit).count(dim=['latitude', 'longitude']).mean().compute())
-    single_map(a2_mean,
-               title='',
+    # print(ds['A2'].where(ds['A2'] > a2_crit).count(dim=['latitude', 'longitude']).mean().compute())
+    single_map(ds['A2'].sel(duration=24),
+               title='Anderson-Darling $A^2$ for d=24h, 2000-2017',
                cbar_label='$A^2$',
                center=a2_crit,
                reverse=True,
-               fig_name='A2_2000-2017_1pct.png')
+               fig_name='A2_2000-2017_1pct_24h.png')
 
 
 def table_anderson_quantiles(ds, dim):
@@ -977,8 +978,6 @@ def fig_midas_mean(ds_pairs, fig_name):
         ax.set_xticks(XTICKS)
         ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
 
-
-
     lgd = fig.legend(lines, labels, loc='lower center', ncol=3)
     plt.tight_layout()
     plt.subplots_adjust(bottom=.1, wspace=None, hspace=None)
@@ -986,12 +985,72 @@ def fig_midas_mean(ds_pairs, fig_name):
     plt.close()
 
 
+def gumbel_intensity(loc, scale, T):
+    i = loc - scale * np.log(-np.log(1 - 1 / T))
+    return i
+
+
+def scatter_intensity(ds_era, ds_gauges):
+    """
+    """
+    # change era's longitude to be the same as midas gauges
+    ds_era['longitude'] = ds_era['longitude'] - 180
+    # keep only stations with coordinates
+    ds_gauges = ds_gauges.reset_coords(['latitude', 'longitude'])
+    gauges_sel = np.logical_and(np.isfinite(ds_gauges['latitude']), np.isfinite(ds_gauges['longitude']))
+    ds_gauges = ds_gauges.where(gauges_sel, drop=True)
+    # print(ds_gauges)
+    # Select the cells above the stations
+    ds_era_sel = ds_era.sel(latitude=ds_gauges['latitude'],
+                            longitude=ds_gauges['longitude'],
+                            method='nearest')
+    ds_list = []
+    for ds, name in zip([ds_era_sel, ds_gauges], ['era5', 'midas']):
+        # Delete coordinates (no longer used)
+        ds.drop(['latitude', 'longitude'])
+        # Merge the two datasets along a new dimension
+        ds = ds_era_sel.expand_dims('source')
+        ds.coords['source'] = [name]
+        ds_list.append(ds)
+    ds = xr.merge(ds_list)
+    # print(ds)
+
+    # calculate intensity for given duration
+    da_list = []
+    for T in [2,10,50,100,500,1000]:
+        intensity = gumbel_intensity(ds['location'],
+                                     ds['scale'],
+                                     T).rename('intensity')
+        intensity = intensity.expand_dims('T')
+        intensity.coords['T'] = [T]
+        da_list.append(intensity)
+    da_i = xr.concat(da_list, dim='T')
+    print(da_i.load())
+
+
+def a2_map(a2_values, years):
+    print(a2_values)
+    # get critical values
+    _, critical_values, significance_levels = scipy.stats.anderson(years, dist='gumbel_r')
+    da_crit = xr.DataArray(critical_values, name='A2_crit',
+                           coords=[significance_levels],
+                           dims=['significance_level'])
+    print(da_crit)
+    a2_crit = da_crit.sel(significance_level=5).values
+    single_map(a2_values['A2'],
+               title='Anderson-Darling $A^2$ for d=24h, 1979-2017',
+               cbar_label='$A^2$',
+               center=a2_crit,
+               reverse=True,
+               fig_name='A2_1979-2017_5pct_24h.png')
+
+
 def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_ANNUAL_FILE)).sel(gumbel_fit=b'scipy', drop=True)
     ds_midas = xr.open_dataset(MIDAS_ANNUAL_FILE).sel(gumbel_fit='scipy', drop=True)
-    ds_midas_pairs = xr.open_dataset(MIDAS_PAIRS).sel(gumbel_fit='scipy', drop=True)
-    # print(ds_era.latitude.load())
-    # print(ds_midas_pairs)
+    # ds_midas_pairs = xr.open_dataset(MIDAS_PAIRS).sel(gumbel_fit='scipy', drop=True)
+    # print(ds_era['longitude'].load())
+    # print(ds_midas['longitude'].load())
     # station_permut(ds_midas)
 
 
@@ -1041,11 +1100,16 @@ def main():
     # ds_points = {'MIDAS': (ds_midas.sel(scaling_extent='daily'), 'src_name')}
     # sites_list = get_site_list(ds_midas, 'src_name', use_only=use_stations)
 
-    ds_cont = {'ERA5': ds_era.sel(scaling_extent=[b'daily', b'all'])}
-    ds = combine_ds_per_site(STUDY_SITES, ds_cont=ds_cont)
-    plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017-11sites.pdf')
+    # ds_cont = {'ERA5': ds_era.sel(scaling_extent=[b'daily', b'all'])}
+    # ds = combine_ds_per_site(STUDY_SITES, ds_cont=ds_cont)
+    # plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017-11sites.pdf')
 
+    ##############
+    scatter_intensity(ds_era.sel(scaling_extent=b'all', drop=True),
+                      ds_midas.sel(scaling_extent='all', drop=True))
 
+    # a2_values = xr.open_dataset(os.path.join(DATA_DIR, '../data/era5_1979-2017_precip_a2_24.nc'))
+    # a2_map(a2_values, ds_era['year'])
 
     # single_map(ds_era['scaling_pearsonr'],
     #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
