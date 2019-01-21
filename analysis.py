@@ -4,6 +4,7 @@ import os
 import copy
 from datetime import datetime, timedelta
 import csv
+import math
 
 import numpy as np
 import pandas as pd
@@ -13,26 +14,26 @@ from dask.diagnostics import ProgressBar
 import zarr
 import scipy.stats
 import scipy.optimize
+from scipy.special import gamma
 import statsmodels.api as sm
+import numba as nb
 
+DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
+# DATA_DIR = '../data/MIDAS/'
+# HOURLY_FILE1 = 'midas_2000-2017_precip_pairs.nc'
+# HOURLY_FILE2 = 'era5_1979-1999_precip.zarr'
 
-# DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
-DATA_DIR = '../data/MIDAS/'
-HOURLY_FILE1 = 'midas_2000-2017_precip_pairs.nc'
-# HOURLY_FILE2 = 'era5_2013-2017_precip.zarr'
-
-# ANNUAL_FILE = 'midas_2000-2017_precip_annual_max.nc'
-# ANNUAL_FILE2 = 'era5_2013-2017_precip_annual_max.zarr'
-# ANNUAL_FILE_GUMBEL = 'era5_2000-2017_precip_gumbel.zarr'
+ANNUAL_FILE = 'era5_1979-2017_precip_annual_max.zarr'
+ANNUAL_FILE_FITTED = 'era5_1979-2017_precip_fitted.zarr'
 # ANNUAL_FILE_GRADIENT = 'era5_2000-2017_precip_gradient.zarr'
-ANNUAL_FILE_SCALING = 'midas_2000-2017_precip_pairs_scaling.nc'
+# ANNUAL_FILE_SCALING = 'midas_2000-2017_precip_pairs_scaling.nc'
 
 LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
 
 # Extract
 # EXTRACT = dict(latitude=slice(1.0, -0.25),
 #                longitude=slice(32.5, 35))
-EXTRACT = dict(latitude=slice(0, -5),
+EXTRACT = dict(latitude=slice(45, 40),
                longitude=slice(0, 5))
 
 # Event durations in hours - has to be adjusted to temporal resolution for the moving window
@@ -41,6 +42,7 @@ DURATIONS_SUBDAILY = [1, 2, 3, 4, 6, 8, 10, 12, 18, 24]
 DURATIONS_DAILY = [24, 48, 72, 96, 120, 144, 192, 240, 288, 360]
 # use fromkeys to remove duplicate. need py >= 3.6 to preserve order
 DURATIONS_ALL = list(dict.fromkeys(DURATIONS_SUBDAILY + DURATIONS_DAILY))
+
 DURATION_DICT = {'all': DURATIONS_ALL, 'daily': DURATIONS_DAILY, 'subdaily': DURATIONS_SUBDAILY}
 # DURATION_DICT = {'daily': DURATIONS_DAILY}
 # Temporal resolution of the input in hours
@@ -111,11 +113,12 @@ def rank_annual_maxs(annual_maxs):
     but this results in negative scale parameter, and wrong fitting.
     return a Dataset
     """
+    # Ranking does not work on dask array
     asc_rank = annual_maxs.load().rank(dim='year')
     # make sure that the resulting array is in the same order as the original
     ranks = asc_rank.rename('rank').astype(DTYPE).transpose(*annual_maxs.dims)
-    # Merge arrays in a single dataset
-    return xr.merge([annual_maxs, ranks])
+    # Merge arrays in a single dataset, set the dask chunks
+    return xr.merge([annual_maxs, ranks]).chunk(ANNUAL_CHUNKS)
 
 
 def gumbel_cdf(x, loc, scale):
@@ -143,6 +146,55 @@ def gumbel_scipy_fit(ds):
                                 output_dtypes=[DTYPE, DTYPE]
                                 )
     return loc.rename('location'), scale.rename('scale')
+
+
+def gev_mle_get_loc(ams):
+    try:
+        params = scipy.stats.genextreme.fit(ams)
+    except RuntimeError:
+        params = (np.nan, np.nan, np.nan)
+    return params[1]
+
+
+def gev_mle_get_scale(ams):
+    try:
+        params = scipy.stats.genextreme.fit(ams)
+    except RuntimeError:
+        params = (np.nan, np.nan, np.nan)
+    return params[2]
+
+
+def gev_mle_get_shape(ams):
+    try:
+        params = scipy.stats.genextreme.fit(ams)
+    except RuntimeError:
+        params = (np.nan, np.nan, np.nan)
+    return params[0]
+
+
+def gev_mle_fit(ds):
+    """Employ scipy stats to find the GEV coefficients
+    """
+    da_list = []
+    for param, func in zip(['location', 'scale', 'shape'],
+            [gev_mle_get_loc, gev_mle_get_scale, gev_mle_get_shape]):
+        p = xr.apply_ufunc(func,
+                        ds['annual_max'],
+                        input_core_dims=[['year']],
+                        output_core_dims=[[]],
+                        vectorize=True,
+                        dask='parallelized',
+                        output_dtypes=[DTYPE]
+                        ).rename(param)
+        da_list.append(p)
+    return tuple(da_list)
+
+
+def gev_mle_ravel(ds):
+    arr = ds['annual_max'].values.ravel()
+    print(len(arr))
+    params = scipy.stats.genextreme.fit(arr)
+    return params
 
 
 def gumbel_fit_loaiciga1999(ds):
@@ -185,6 +237,25 @@ def gumbel_fit_moments(ds):
     loc = (mean - (magic_number1 * std)).rename('location')
     scale = (magic_number2 * std).rename('scale')
     return loc, scale
+
+
+def frechet_fit_moments(ds, shape=0.114):
+    """Fit Fréchet (EV type II) using the method of moments and a fixed shape parameter.
+    Koutsoyiannis, D. (2004).
+    Statistics of extremes and estimation of extreme rainfall: II.
+    Empirical investigation of long rainfall records.
+    Hydrological Sciences Journal, 49(4).
+    https://doi.org/10.1623/hysj.49.4.591.54424
+    """
+    c1 = math.sqrt(gamma(1-2*shape) - gamma(1-shape)**2)
+    c3 = (gamma(1-shape)-1)/shape
+
+    mean = ds['annual_max'].mean(dim='year')
+    std = ds['annual_max'].std(dim='year')
+    scale = (c1 * std).rename('scale')
+    loc = ((mean/scale) - c3).rename('location')
+    da_shape = xr.full_like(mean, shape).rename('shape')
+    return loc, scale, da_shape
 
 
 def KS_test(ds):
@@ -309,8 +380,8 @@ def step1_annual_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res
     return xr.concat(annual_maxs, 'duration')
 
 
-def step2_fit_gumbel(da_annual_maxs):
-    """Fit gumbel using various techniques.
+def step2_fit_ev(da_annual_maxs):
+    """Fit EV using various techniques.
     Keep them along a new dimension
     """
     n_obs = da_annual_maxs.count(dim='year')
@@ -318,22 +389,24 @@ def step2_fit_gumbel(da_annual_maxs):
     ds = rank_annual_maxs(da_annual_maxs)
     # Estimate probability F{x} with the Weibull formula
     ds['estim_prob'] = (ds['rank'] / (n_obs+1)).astype(DTYPE)
-    # Goodness of fit of the Gumbel distribution
-    da_crit, da_a2 = anderson_darling(ds)
+    # Goodness of fit of the distribution
+    # da_crit, da_a2 = anderson_darling(ds)
     # Do the fitting
     ds_list = []
-    for fit_func, name in [(gumbel_fit_moments, 'moments'),
-                           #(gumbel_fit_loaiciga1999, 'iterative_linear'),
-                           (gumbel_scipy_fit, 'scipy'),
+    for fit_func, name in [#(frechet_fit_moments, 'frechet_mom'),
+                           #(gumbel_fit_loaiciga1999, 'gumbel_iterative_linear'),
+                        #    (frechet_mle_fit, 'frechet_mle'),
+                           (gev_mle_fit, 'gev_mle'),
                            ]:
         ds_fit = xr.merge(fit_func(ds))
-        ds_fit = ds_fit.expand_dims('gumbel_fit')
-        ds_fit.coords['gumbel_fit'] = [name]
+        ds_fit = ds_fit.expand_dims('ev_fit')
+        ds_fit.coords['ev_fit'] = [name]
         ds_list.append(ds_fit)
-    ds_fit = xr.concat(ds_list, dim='gumbel_fit')
-    ds = xr.merge([da_crit, da_a2, ds, ds_fit])
+    ds_fit = xr.concat(ds_list, dim='ev_fit')
+    ds = xr.merge([ds, ds_fit])
+    # ds = xr.merge([da_crit, da_a2, ds, ds_fit])
     # Perform the Kolmogorov-Smirnov test
-    ds = KS_test(ds)
+    # ds = KS_test(ds)
     return ds
 
 
@@ -426,8 +499,10 @@ def adhoc_AD(annual_max):
     """Calculate Anderson-Darling statistic for each duration.
     Save a separate file for each duration
     """
-    for duration in annual_max['duration']:
-        duration_value = duration.values
+    # for duration in annual_max['duration']:
+    for duration in [24]:
+        # duration_value = duration.values
+        duration_value = duration
         print(duration_value)
         da_sel = annual_max.sel(duration=duration)
         da_a2 = xr.apply_ufunc(anderson_gumbel,
@@ -437,7 +512,7 @@ def adhoc_AD(annual_max):
                             #    dask='parallelized',
                                output_dtypes=[DTYPE]
                                ).rename('A2')
-        out_name = 'era5_2000-2017_precip_a2_{}.nc'.format(duration_value)
+        out_name = 'era5_1979-2017_precip_a2_{}.nc'.format(duration_value)
         out_path = os.path.join(DATA_DIR, out_name)
         da_a2.to_dataset().to_netcdf(out_path)
 
@@ -539,37 +614,53 @@ def main():
         start_time = datetime.now()
         # Load hourly data #
         # logger(['start computing annual maxima', str(start_time), 0])
-        hourly_path1 = os.path.join(DATA_DIR, HOURLY_FILE1)
+        # hourly_path1 = os.path.join(DATA_DIR, HOURLY_FILE1)
         # hourly_path2 = os.path.join(DATA_DIR, HOURLY_FILE2)
-        hourly1 = xr.open_dataset(hourly_path1)#.chunk(HOURLY_CHUNKS).loc[EXTRACT]
-        # hourly2 = xr.open_zarr(hourly_path2)
+        # hourly1 = xr.open_dataset(hourly_path1)#.chunk(HOURLY_CHUNKS).loc[EXTRACT]
+        # hourly2 = set_attrs(xr.open_zarr(hourly_path2))#.loc[EXTRACT]
         # hourly = set_attrs(xr.concat([hourly1, hourly2], dim='time')).chunk(HOURLY_CHUNKS)#.loc[EXTRACT]
         # hourly = xr.open_zarr(hourly_path1)
-        # print(hourly1)
+        # print(hourly2)
+        # hourly_test = xr.open_zarr('/home/lunet/gylc4/geodata/ERA5/monthly_zarr/1990-01.zarr')
+        # print(set_attrs(hourly_test))
 
         # Get annual maxima #
-        annual_maxs = step1_annual_maxs_of_roll_mean(hourly1, 'prcp_amt', 'end_time', DURATIONS_ALL, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
-        # annual_maxs = step1_annual_maxs_of_roll_mean(hourly, 'precipitation', 'time', DURATIONS_DAILY, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
-        # amax_path = os.path.join(DATA_DIR, ANNUAL_FILE)
+        # annual_maxs = step1_annual_maxs_of_roll_mean(hourly1, 'prcp_amt', 'end_time', DURATIONS_ALL, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
+        # ams = step1_annual_maxs_of_roll_mean(hourly2, 'precipitation', 'time', DURATIONS_ALL, TEMP_RES).chunk(ANNUAL_CHUNKS)
+        # print(ams)
+        # amax_path1 = os.path.join(DATA_DIR, ANNUAL_FILE)
         # amax_path2 = os.path.join(DATA_DIR, ANNUAL_FILE2)
-        # print(annual_maxs.load())
-        # encoding = {v:GEN_FLOAT_ENCODING for v in annual_maxs.to_dataset().data_vars.keys()}
-        # annual_maxs.to_dataset().to_zarr(amax_path, mode='w', encoding=encoding)
-        # annual_maxs.to_dataset().to_netcdf(amax_path, mode='w')
+        # ams1 = xr.open_zarr(amax_path1)
+        # ams2 = xr.open_zarr(amax_path2)
 
-        # fit Gumbel #
-        ds_fitted = step2_fit_gumbel(annual_maxs)#.chunk(ANNUAL_CHUNKS)
+        # ams_all = xr.concat([ams1, ams2], dim='year')
+        # amax_path3 = os.path.join(DATA_DIR, ANNUAL_FILE3)
+        # encoding = {v:GEN_FLOAT_ENCODING for v in ams_all.data_vars.keys()}
+        # ams_all.to_zarr(amax_path3, mode='w', encoding=encoding)
+        ams_path = os.path.join(DATA_DIR, ANNUAL_FILE)
+        ams = xr.open_zarr(ams_path)
+        # print(ams)
+        # frechet_fit_moments(ams)
+
+        # fit EV #
+        # ds_fitted = step2_fit_ev(ams['annual_max'].loc[EXTRACT].sel(duration=[24,48]))#.chunk(ANNUAL_CHUNKS)
+        ams_sel = ams.loc[EXTRACT].sel(duration=[24])
+        print(ams_sel)
+        params = gev_mle_ravel(ams_sel)
+        print(params)
+        # ds_fitted = step2_fit_ev(ams['annual_max']))#.chunk(ANNUAL_CHUNKS)
         # print(ds_fitted)
+        # print(ds_fitted[['location', 'scale', 'shape']].mean().load())
         # logger(['start writting results of gumbel fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        # gumbel_path = os.path.join(DATA_DIR, ANNUAL_FILE_GUMBEL)
+        # ev_path = os.path.join(DATA_DIR, ANNUAL_FILE_FITTED)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        # ds_fitted.to_zarr(gumbel_path, mode='w', encoding=encoding)
+        # ds_fitted.to_zarr(ev_path, mode='w', encoding=encoding)
         # print(ds_fitted)
 
         # fit parameters scaling #
         # ds_fitted = xr.open_zarr(gumbel_path)#.loc[EXTRACT]
         # logger(['start duration scaling fitting', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        ds_scaled = step3_scaling(ds_fitted).load()
+        # ds_scaled = step3_scaling(ds_fitted).load()
         # logger(['start writing duration scaling', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
         # gradient_path = os.path.join(DATA_DIR, ANNUAL_FILE_GRADIENT)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_scaled.data_vars.keys()}
@@ -577,18 +668,18 @@ def main():
 
         # ds_fitted = xr.open_zarr(gradient_path)
         # logger(["start correlation computation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        ds_scaled = step4_scaling_correlation(ds_scaled)#.chunk(ANNUAL_CHUNKS)
+        # ds_scaled = step4_scaling_correlation(ds_scaled)#.chunk(ANNUAL_CHUNKS)
         # print(ds_scaled.load())
         # print(ds_scaled['ks'].load().quantile([0.95,0.99,0.999], dim=['duration', 'latitude', 'longitude']))
         # print(ds_scaled['location'].load().std(dim=['duration', 'latitude', 'longitude']))
 
         # logger(["start writing correlation", str(datetime.now()), (datetime.now()-start_time).total_seconds()])
-        scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_SCALING)
+        # scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_SCALING)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_scaled.data_vars.keys()}
         # ds_scaled.to_zarr(scaling_path, mode='w', encoding=encoding)
         # print(ds_fitted.load())
-        ds_scaled.to_netcdf(scaling_path)
-        print(ds_scaled.compute())
+        # ds_scaled.to_netcdf(scaling_path)
+        # print(ds_scaled.compute())
         # print((~np.isfinite(ds_fitted)).sum().compute())
         # logger(['complete', str(datetime.now()), (datetime.now()-start_time).total_seconds()])
 
@@ -596,7 +687,8 @@ def main():
         # path2 = os.path.join(DATA_DIR, 'era5_2000-2017_precip_rvalue_pvalue.zarr')
         # ds1 = xr.open_zarr(path1)#.chunk(ANNUAL_CHUNKS)#.loc[EXTRACT]
         # ds2 = xr.open_zarr(path2)
-        # adhoc_AD(ds1['annual_max'])
+        # ams_all = xr.open_zarr(os.path.join(DATA_DIR, ANNUAL_FILE))
+        # adhoc_AD(ams_all['annual_max'])
         # ds_combined = xr.merge([ds1, ds2]).chunk(ANNUAL_CHUNKS)
         # print(ds_combined)
         # print(ds_scaled)
