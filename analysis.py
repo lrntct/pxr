@@ -1,21 +1,16 @@
 # -*- coding: utf8 -*-
 import sys
 import os
-import copy
 from datetime import datetime, timedelta
 import csv
 import math
 
 import numpy as np
-import pandas as pd
 import xarray as xr
 import dask
 from dask.diagnostics import ProgressBar
 import zarr
 import scipy.stats
-import scipy.optimize
-from scipy.special import gamma
-import statsmodels.api as sm
 import numba as nb
 
 import ev_fit
@@ -68,44 +63,6 @@ ANNUAL_ENCODING = {'annual_max': GEN_FLOAT_ENCODING,
                    'longitude': {'dtype': DTYPE}}
 
 
-def linregress(func, x, y, dims):
-    """x, y: dataArray to use for the regression
-    dims: dimension on which to carry out the regression
-    """
-    # return a tuple of DataArrays
-    res = xr.apply_ufunc(func, x, y,
-            input_core_dims=[dims, dims],
-            output_core_dims=[[] for i in LR_RES],
-            vectorize=True,
-            dask='allowed',
-            output_dtypes=[DTYPE for i in LR_RES]
-            )
-    return res
-
-
-def nanlinregress(x, y):
-    """wrapper around statsmodels OLS to make it behave like scipy linregress.
-    Make use of its capacity to ignore NaN.
-    """
-    X = sm.add_constant(x)
-    try:
-        results = sm.OLS(y, X, missing='drop').fit()
-    except ValueError:
-        slope = np.nan
-        intercept = np.nan
-        rvalue = np.nan
-        pvalue = np.nan
-        stderr = np.nan
-    else:
-        slope = results.params[1]
-        intercept = results.params[0]
-        rvalue = results.rsquared ** .5
-        pvalue = results.pvalues[1]
-        stderr = results.bse[1]
-
-    return slope, intercept, rvalue, pvalue, stderr
-
-
 def ds_resamp(ds, res):
     # print(scaling_ratio)
     new_lat = ds['latitude'].values[::res]
@@ -140,6 +97,8 @@ def step1_annual_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res
 
 
 def step21_rank_ecdf(ds_ams):
+    """Compute the rank of AMS and the empirical probability
+    """
     n_obs = ds_ams['year'].count()
     # Add rank and turn to dataset
     ds = ev_fit.rank_ams(ds_ams['annual_max'], ANNUAL_CHUNKS, DTYPE)
@@ -150,35 +109,42 @@ def step21_rank_ecdf(ds_ams):
     return ds
 
 
-def step22_goodness_of_fit(ds_ams):
+def step22_fit_ev(ds):
+    """Fit EV using various techniques.
+    Keep them along a new dimension
+    """
+    models = [
+        # (ev_fit.frechet_mom, (ds), 'frechet_mom'),
+        # (ev_fit.gumbel_iter_linear, (ds), 'gumbel_iter_linear'),
+        # (frechet_mle_fit, (ds), 'frechet_mle'),
+        # (ev_fit.gev_mle_fit, (ds), 'gev_mle'),
+        (ev_fit.gev_pwm, (ds,), 'gev_pwm'),
+        (ev_fit.gev_pwm, (ds, 0.114), 'frechet_pwm'),
+        ]
+    ds_list = []
+    for fit_func, args, name in models:
+        ds_fit = xr.merge(fit_func(*args))
+        ds_fit['cdf'] = ev_fit.gev_cdf(ds['annual_max'],
+                                       ds_fit['location'],
+                                       ds_fit['scale'],
+                                       ds_fit['shape'],)
+        ds_fit = ds_fit.expand_dims('ev_fit')
+        ds_fit.coords['ev_fit'] = [name]
+        ds_list.append(ds_fit)
+    ds_fit = xr.concat(ds_list, dim='ev_fit')
+    ds = xr.merge([ds, ds_fit])
+    return ds
+
+
+def step24_goodness_of_fit(ds):
     # Goodness of fit of the distribution
     # da_crit, da_a2 = gof.anderson_darling(ds)
     # Do the fitting
     # ds = xr.merge([da_crit, da_a2, ds, ds_fit])
     # Perform the Kolmogorov-Smirnov test
     # ds = KS_test(ds)
-    pass
-
-
-def step29_fit_ev(ds):
-    """Fit EV using various techniques.
-    Keep them along a new dimension
-    """
-    ds_list = []
-    for fit_func, args, name in [
-            # (ev_fit.frechet_mom, (ds), 'frechet_mom'),
-            # (ev_fit.gumbel_iter_linear, (ds), 'gumbel_iterative_linear'),
-            # (frechet_mle_fit, (ds), 'frechet_mle'),
-            # (ev_fit.gev_mle_fit, (ds), 'gev_mle'),
-            (ev_fit.gev_pwm, (ds), 'gev_pwm'),
-            (ev_fit.gev_pwm, (ds, 0.114), 'frechet_pwm'),
-            ]:
-        ds_fit = xr.merge(fit_func(*args))
-        ds_fit = ds_fit.expand_dims('ev_fit')
-        ds_fit.coords['ev_fit'] = [name]
-        ds_list.append(ds_fit)
-    ds_fit = xr.concat(ds_list, dim='ev_fit')
-    ds = xr.merge([ds, ds_fit])
+    ds['KS_D'] = gof.KS_test(ds['ecdf_weibull'], ds['cdf'])
+    ds = gof.KS_Dcrit(ds, ANNUAL_CHUNKS)
     return ds
 
 
@@ -271,20 +237,31 @@ def main():
         # ams1 = xr.open_zarr(amax_path1)
 
         # Rank # 
-        # ams_path = os.path.join(DATA_DIR, ANNUAL_FILE)
-        # ams = xr.open_zarr(ams_path)
-        # ds_ranked = step21_rank_ecdf(ams)
+        ams_path = os.path.join(DATA_DIR, ANNUAL_FILE)
+        ams = xr.open_zarr(ams_path)
+        ds_ranked = step21_rank_ecdf(ams)
         # print(ds_ranked)
         ranked_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
-        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_ranked.data_vars.keys()}
-        # ds_ranked.to_zarr(ranked_path, mode='w', encoding=encoding)
+        encoding = {v:GEN_FLOAT_ENCODING for v in ds_ranked.data_vars.keys()}
+        ds_ranked.to_zarr(ranked_path, mode='w', encoding=encoding)
 
         # fit EV #
         ds_ranked = xr.open_zarr(ranked_path)#.loc[EXTRACT]
-        ds_fitted = step29_fit_ev(ds_ranked)
+        ds_fitted = step22_fit_ev(ds_ranked)
         fitted_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('fitted'))
         encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         ds_fitted.to_zarr(fitted_path, mode='w', encoding=encoding)
+        # print(ds_fitted)
+
+        # GoF test #
+        ds_fitted = xr.open_zarr(fitted_path)
+        ds_gof = step24_goodness_of_fit(ds_fitted)
+        gof_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof'))
+        encoding = {v:GEN_FLOAT_ENCODING for v in ds_gof.data_vars.keys()}
+        ds_gof.to_zarr(gof_path, mode='w', encoding=encoding)
+
+        # ds_gof = xr.open_zarr(gof_path)
+        # print(ds_gof.load())
 
         # ds_fitted = xr.open_zarr(fitted_path)#.loc[EXTRACT]
         # MAE of parameters

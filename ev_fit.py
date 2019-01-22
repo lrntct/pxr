@@ -9,6 +9,7 @@ from scipy.special import gamma
 import scipy.stats
 import numpy as np
 
+import helper
 
 """Collection of functions related to extreme values probabilities
 """
@@ -70,11 +71,11 @@ def gumbel_iter_linear(ds):
     """
     # linearize
     linearize = lambda a: (np.log(np.log(1/a))).astype(DTYPE)
-    estim_prob_linear = linearize(ds['estim_prob'])
+    ecdf_linear = linearize(ds['ecdf_weibull'])
     # First fit. Keep only the two first returning DataArrays
-    estim_slope, estim_intercept = linregress(scipy.stats.linregress,
+    estim_slope, estim_intercept = helper.linregress(scipy.stats.linregress,
                                               ds['annual_max'],
-                                              estim_prob_linear, ['year'])[:2]
+                                              ecdf_linear, ['year'])[:2]
     # get provisional gumbel parameters
     loc_prov = -estim_intercept / estim_slope
     scale_prov = -1 / estim_slope
@@ -82,7 +83,7 @@ def gumbel_iter_linear(ds):
     analytic_prob = gumbel_cdf(ds['annual_max'], loc_prov, scale_prov)
     # Get the final location and scale parameters
     analytic_prob_linear = linearize(analytic_prob)
-    analytic_slope, analytic_intercept = linregress(scipy.stats.linregress,
+    analytic_slope, analytic_intercept = helper.linregress(scipy.stats.linregress,
                                                     ds['annual_max'],
                                                     analytic_prob_linear, ['year'])[:2]
     loc_final = (-analytic_intercept / analytic_slope).rename('location')
@@ -140,6 +141,16 @@ def frechet_mom(ds, shape=0.114):
     da_shape = xr.full_like(mean, shape).rename('shape')
     return loc, scale, da_shape
 
+def gev_cdf_nonzero(x, loc, scale, shape):
+    z = (x - loc) / scale
+    return np.e**(-(1+shape*z)**-(1/shape))
+
+
+def gev_cdf(x, loc, scale, shape):
+    return xr.where(shape == 0,
+                    gumbel_cdf(x, loc, scale),
+                    gev_cdf_nonzero(x, loc, scale, shape))
+
 
 def b_value(ds, order):
     """b values used for GEV fitting using the PWM
@@ -149,7 +160,7 @@ def b_value(ds, order):
     Technometrics, 27(3), 251–261.
     https://doi.org/10.1080/00401706.1985.10488049
     """
-    n_obs = ds_ams['year'].count()
+    n_obs = ds['year'].count()
     # Hosking (1990) calls for a specific plotting position
     pr_sum = ((ds['ecdf_hosking']**order) * ds['annual_max']).sum(dim='year')
     return (1./n_obs) * pr_sum
