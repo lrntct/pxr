@@ -25,8 +25,8 @@ BASE_FILE = 'midas_rainhrly_{y}01-{y}12.txt'
 STATIONS_DIR = os.path.join(BASE_DIR, 'stations')
 STATIONS_LIST = os.path.join(BASE_DIR, 'src_id_list.xls')
 OUT_FILE = '/home/lunet/gylc4/geodata/MIDAS/midas_precip_1950-2017.zarr'
-SELECT_FILE = '../data/MIDAS/midas_2000-2017_precip_select.zarr'
-PAIR_FILE = '../data/MIDAS/midas_2000-2017_precip_pairs.nc'
+SELECT_FILE = '../data/MIDAS/midas_1979-2017_precip_select.zarr'
+PAIR_FILE = '../data/MIDAS/midas_1979-2017_precip_pairs.nc'
 
 # https://www.metoffice.gov.uk/public/weather/climate-extremes/#?tab=climateExtremes
 UK_HOURLY_MAX = 92.0
@@ -125,7 +125,7 @@ def read_stations(data_dir):
 
 
 def select_stations(ds, ymin, ymax):
-    # ds.coords['int_id'] = xr.DataArray(np.arange(len(ds['station'])), dims='station',)
+    # 90% of all hourly records in 365 days
     min_records = int(365*24*.9)
     # Keep only the years of interest
     ds_short = ds.sel(end_time=slice(str(ymin), str(ymax)))
@@ -152,7 +152,8 @@ def select_stations(ds, ymin, ymax):
 
 
 def qc0(ds):
-    # Keep only the quality controlled data
+    """Flag data that are not hourly, and flagged as not reliable
+    """
     ds['qc0'] = np.logical_or(np.not_equal(ds['version_num'], 1),
                               ds['ob_hour_count']!=1)
 
@@ -259,11 +260,11 @@ def main():
         # ds = read_stations(STATIONS_DIR).chunk(CHUNKS)
         # print(ds)
         # ds.to_zarr(OUT_FILE, mode='w')
-        # ds = xr.open_zarr(OUT_FILE)
-        # ds = quality_assessment(ds)
-        # ds_sel = select_stations(ds, 2000, 2017).chunk(CHUNKS)
+        ds = xr.open_zarr(OUT_FILE)
+        ds = quality_assessment(ds)
+        ds_sel = select_stations(ds, 1979, 2017).chunk(CHUNKS)
         # ds_loaded = ds_sel.load()
-        # print(ds)
+        print(ds_sel)
         # print(ds_sel['prcp_amt'])
         # print(ds_loaded['prcp_amt'].mean())
         # print(ds_loaded['prcp_amt'].min())
@@ -272,14 +273,14 @@ def main():
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_sel.data_vars.keys()}
         # ds_sel.load().to_zarr(SELECT_FILE, mode='w')
 
-        ds_sel = xr.open_zarr(SELECT_FILE)
+        # ds_sel = xr.open_zarr(SELECT_FILE)
         # gdf = to_gdf(ds_sel)
         # out_path = os.path.join('../data/MIDAS', "midas.gpkg")
         # gdf.to_file(out_path, driver="GPKG")
         # print(ds_sel.max().load())
 
-        ds_pairs = station_pairs(ds_sel)
-        ds_pairs.load().to_netcdf(PAIR_FILE, mode='w')
+        # ds_pairs = station_pairs(ds_sel)
+        # ds_pairs.load().to_netcdf(PAIR_FILE, mode='w')
 
 
 
