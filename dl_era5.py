@@ -8,30 +8,29 @@ import multiprocessing as mp
 import datetime
 import urllib3.exceptions
 
+import xarray as xr
 import cdsapi
 import humanize
 import requests
-# from ecmwfapi import ECMWFDataServer
 
-DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/monthly_grib_total_precip'
+# import read_grib
 
-FORMAT = 'grib'
+DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/ensemble'
+
+# FORMAT = 'grib'
+FORMAT = 'netcdf'
 PRODUCT = 'reanalysis-era5-single-levels'
 VARIABLE = [
             #'mean_total_precipitation_rate'
             'total_precipitation'
             ]
-TYPE = 'reanalysis'
-# TYPE = 'ensemble_members'
-MONTH = ['01','02','03','04','05','06','07','08','09','10','11','12']
-DAY = ['01','02','03','04','05','06','07','08','09','10','11','12','13','14','15',
-       '16','17','18','19','20','21','22','23','24','25','26','27','28','29','30','31']
-TIME = ['00:00','01:00','02:00','03:00','04:00','05:00',
-        '06:00','07:00','08:00','09:00','10:00','11:00',
-        '12:00','13:00','14:00','15:00','16:00','17:00',
-        '18:00','19:00','20:00','21:00','22:00','23:00']
-START_YEAR = 1980
-END_YEAR = 1999
+# TYPE = 'reanalysis'
+TYPE = 'ensemble_members'
+MONTH = [str(i+1).zfill(2) for i in range(12)]
+DAY = [str(i+1).zfill(2) for i in range(31)]
+TIME = ['{}:00'.format(i).zfill(5) for i in range(24)]
+START_YEAR = 1979
+END_YEAR = 1979
 
 
 def get_url(year, month):
@@ -74,39 +73,23 @@ def dl_cdsapi(year_month):
                 humanize.naturalsize(dl_size))
                 )
             # If timeout, re-initiate the download
+            headers = {'Range': 'bytes={}-'.format(dl_size)}
             try:
                 resp = requests.get(url, stream=True, timeout=(5, 5),
-                                    headers={'Range': f'bytes={dl_size}-'})
+                                    headers=headers)
                 shutil.copyfileobj(resp.raw, f)
             except (requests.exceptions.ReadTimeout, urllib3.exceptions.ReadTimeoutError) as e:
                 continue
             dl_size = f.tell()
+    # convert to zarr and delete grib
+    ds = xr.open_dataset(disk_url)
+    print(ds)
+    # read_grib.grib2zarr(disk_url, DATA_DIR)
+    # os.remove(disk_url)
 
-    # cds_r.download(filename)
-
-
-
-# def dl_ecmwf(year):
-#     server = ECMWFDataServer()
-#     server.retrieve({
-#         "class": "ea",
-#         "dataset": "era5",
-#         "expver": "1",
-#         "stream": "oper",
-#         "type": "an",
-#         "levtype": "sfc",
-#         "param": "165.128/166.128/167.128",
-#         "date": "2016-01-01/to/2016-01-02",
-#         "time": "00:00:00",
-#         "step": "0",
-#         "grid": "0.25/0.25",
-#         "area": "75/-20/10/60",
-#         "format": "netcdf",
-#         "target": "test.nc"
-#      })
 
 def main():
-    pool = mp.Pool(8)
+    pool = mp.Pool(16)
     years = range(START_YEAR, END_YEAR+1)
     year_month = [(y, m) for y in years for m in MONTH]
     # print(year_month)
