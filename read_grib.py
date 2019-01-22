@@ -15,19 +15,19 @@ from dask.diagnostics import ProgressBar
 import zarr
 
 
-GRIB_DIR = '/home/lunet/gylc4/geodata/ERA5/monthly'
+GRIB_DIR = '/home/lunet/gylc4/geodata/ERA5/monthly_grib'
 ZARR_DIR = '/home/lunet/gylc4/geodata/ERA5/monthly_zarr'
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
-LONG_NAME = "Mean total precipitation rate"
+LONG_NAME = "Total precipitation"
 VAR_NAME = 'precipitation'
-UNIT = 'kg m-2 s-1'
+UNIT = 'm'
 
-YEAR_START = 2000
-YEAR_END = 2012
+YEAR_START = 1979
+YEAR_END = 1999
 
-FILE_CONCAT_PREFIX = 'era5_precip'
+FILE_CONCAT_PREFIX = 'era5_1979-1999_precip'
 
-ZARR_CHUNKS = {'time': 365*24, 'latitude': 8, 'longitude': 8}  # 8: 2deg
+ZARR_CHUNKS = {'time': -1, 'latitude': 16, 'longitude': 16}  # 4: 1deg
 ZARR_ENCODING = {'precipitation': {'dtype': 'float32', 'compressor': zarr.Blosc(cname='lz4', clevel=9)},
                  'latitude': {'dtype': 'float32'},
                  'longitude': {'dtype': 'float32'}}
@@ -166,7 +166,7 @@ def compare_zarr():
         print('{}: {}'.format(s, t))
 
 
-def grib2zarr(grib_path):
+def grib2zarr(grib_path, zarr_dir):
     """transform grib to zarr
     """
     # load grib as xarray
@@ -174,10 +174,11 @@ def grib2zarr(grib_path):
     sanitise_cube(cube)
     da = xr.DataArray.from_iris(cube).chunk(ZARR_CHUNKS)
     # mm/hr
-    da_hr = da * 3600.
+    # da_hr = da * 3600.  # Mean rate
+    da_hr = da * 1000.  # Total precip
     basename = os.path.splitext(os.path.basename(grib_path))[0]
     zarr_filename = '{}.zarr'.format(basename)
-    out_file_path = os.path.join(ZARR_DIR, zarr_filename)
+    out_file_path = os.path.join(zarr_dir, zarr_filename)
     print(out_file_path)
     da_hr.to_dataset().to_zarr(out_file_path, mode='w', encoding=ZARR_ENCODING)
 
@@ -185,18 +186,17 @@ def grib2zarr(grib_path):
 def gribs2zarr(years):
     for grib in list_gribs(years):
         print(grib)
-        grib2zarr(grib)
+        grib2zarr(grib, ZARR_DIR)
 
 
-def xarray_concat_zarr(zarr_path):
-    da_list = []
-    for zarr_store in os.listdir(zarr_path):
-        zarr_store_path = os.path.join(zarr_path, zarr_store)
-        da = xr.open_zarr(zarr_store_path)
-        da_list.append(da)
+def xarray_concat_zarr(zarr_path, years):
+    zarr_stores = [f for f in os.listdir(zarr_path) if f.endswith('.zarr')]
+    da_list = [xr.open_zarr(os.path.join(zarr_path, f))
+               for f in zarr_stores if int(f[:4]) in years]
     da_full = xr.auto_combine(da_list).chunk(ZARR_CHUNKS)
     print(da_full)
     out_path = os.path.join(DATA_DIR, '{}.zarr'.format(FILE_CONCAT_PREFIX))
+    print(out_path)
     da_full.to_zarr(out_path, mode='w', encoding=ZARR_ENCODING)
 
 
@@ -205,9 +205,15 @@ def main():
     # compare_grib()
     years = range(YEAR_START, YEAR_END+1)
 
+
     with ProgressBar():
         # gribs2zarr(years)
-        xarray_concat_zarr(ZARR_DIR)
+        xarray_concat_zarr(ZARR_DIR, years)
+
+#     grib_path = os.path.join(GRIB_DIR, '1989-11.grib')
+#     print(grib_path)
+#     cube = iris.load_cube('/home/lunet/gylc4/geodata/ERA5/ensemble/1979-09.grib')
+#     print(cube)
 
 
 if __name__ == "__main__":
