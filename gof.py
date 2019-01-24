@@ -21,6 +21,7 @@ def KS_Dcrit(ds, chunks):
     """Estimate the critical values of the KS test.
     Use the pool of KS stats calculated over the whole dataset.
     The critical value corresponds to the quantile all the KS stats.
+    This is actually the Lilliefors GoF test
 
     See also:
     Wilks, D. S. (2011).
