@@ -29,6 +29,11 @@ def rank_ams(da_ams, chunks, dtype):
 
 def ecdf_weibull(rank, n_obs):
     """Return the Weibull plotting position
+    Recommended by:
+    Makkonen, Lasse. 2006.
+    “Plotting Positions in Extreme Value Analysis.”
+    Journal of Applied Meteorology and Climatology 45 (2): 334–40.
+    https://doi.org/10.1175/JAM2349.1.
     """
     return rank / (n_obs+1)
 
@@ -141,6 +146,7 @@ def frechet_mom(ds, shape=0.114):
     da_shape = xr.full_like(mean, shape).rename('shape')
     return loc, scale, da_shape
 
+
 def gev_cdf_nonzero(x, loc, scale, shape):
     z = (x - loc) / scale
     return np.e**(-(1+shape*z)**-(1/shape))
@@ -188,6 +194,25 @@ def gev_pwm(ds, shape=None):
     location = b0 + scale * (gamma(1+da_shape)-1) / da_shape
 
     return location.rename('location'), scale.rename('scale'), da_shape.rename('shape')
+
+
+def ci_bootstrap(ams, func, n=500):
+    """Estimate the confidence interval (CI) using a bootstrap method, whereby:
+    - n new sample are drawn with replacement from the ams sample,
+    - func is applied to each sample
+    - Keep the quantiles of each results from func as CI
+    """
+    # Draw n sample
+    params_list = []
+    for i in range(n):
+        sample = np.random.choice(ams, len(ams), replace=True)
+        sample = sample.expand_dims('bootstrap_iter')
+        sample.coords['bootstrap_iter'] = [i]
+        params_list.append(func(sample))
+    ds_bootstrap = xr.concat(params_list, dim='bootstrap_iter')
+    print(ds_bootstrap)
+    # Apply function
+
 
 
 def gev_mle_wrapper(ams):
