@@ -39,3 +39,22 @@ def nanlinregress(x, y):
         stderr = results.bse[1]
 
     return slope, intercept, rvalue, pvalue, stderr
+
+
+def OLS(da_x, da_y, dim):
+    """Linear regression along the dimension dim.
+    Use Ordinary Least Squares.
+    """
+    mean_x = da_x.mean(dim=dim)
+    mean_y = da_y.mean(dim=dim)
+    x_diff = da_x - mean_x
+    slope = ((x_diff * (da_y - mean_y)).sum(dim=dim) /
+             (x_diff**2).sum(dim=dim)).rename('line_slope')
+    intercept = (mean_y - slope * mean_x).rename('line_intercept')
+
+    # coefficient of determination
+    fitted = slope * da_x + intercept
+    rsquared = ((np.square(fitted - mean_y).sum(dim=dim)) /
+        (np.square(da_y - mean_y).sum(dim=dim))).rename('rsquared')
+
+    return slope, intercept, rsquared
