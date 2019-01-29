@@ -1,7 +1,9 @@
 # -*- coding: utf8 -*-
 
 import xarray as xr
+import numpy as np
 import statsmodels.api as sm
+
 
 def linregress(func, x, y, dims):
     """x, y: dataArray to use for the regression
@@ -58,3 +60,46 @@ def OLS(da_x, da_y, dim):
         (np.square(da_y - mean_y).sum(dim=dim))).rename('rsquared')
 
     return slope, intercept, rsquared
+
+
+def da_pool(da, old_res, new_res):
+    """Pool value from neighbouring cell at resolution old_res
+    into a coarser cell at resolution new_res
+    """
+    assert abs(da['latitude'][1] - da['latitude'][0]) == old_res
+    assert abs(da['longitude'][1] - da['longitude'][0]) == old_res
+    assert new_res % old_res == 0
+    assert len(da['latitude']) % new_res == 0
+    assert len(da['longitude']) % new_res == 0
+
+    agg_step = int(new_res / old_res)
+    # Transpose the array to ease reshape
+    da_t = da.transpose('duration', 'year', 'latitude', 'longitude')
+    # Sort coordinates
+    da_sorted = da_t.sortby(['latitude', 'longitude'])
+    # New coordinates are at center of the aggregation
+    start_offset = (new_res - old_res)/2
+    lat_start = da_sorted['latitude'][0]
+    lat_end = da_sorted['latitude'][-1]
+    lon_start = da_sorted['longitude'][0]
+    lon_end = da_sorted['longitude'][-1]
+    new_lat_coords = np.arange(lat_start + start_offset, lat_end, new_res)
+    new_lon_coords = np.arange(lon_start + start_offset, lon_end, new_res)
+    # get all the individual points within the new cell
+    da_list = []
+    for i in range(agg_step):
+        for j in range(agg_step):
+            da_sel = da_sorted.isel(latitude=slice(i, None, agg_step),
+                                    longitude=slice(j, None, agg_step))
+            da_sel.coords['latitude'] = new_lat_coords
+            da_sel.coords['longitude'] = new_lon_coords
+            da_list.append(da_sel)
+    # Concatenate along new dimension
+    da_neighbours = xr.concat(da_list, dim='neighbours')
+    # Stack the dimensions together (create multiindex)
+    da_stacked = da_neighbours.stack({'stacked': ['neighbours', 'year']})
+    # merge the multiindex into one, rename to year (expected by other functions)
+    da_r = da_stacked.reset_index('stacked', drop=True).rename(stacked='year')
+    da_r.coords['year'] = range(len(da_r['year']))
+    # Reorder the dimensions
+    return da_r.transpose('duration', 'year', 'latitude', 'longitude')

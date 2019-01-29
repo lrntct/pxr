@@ -15,6 +15,7 @@ import numba as nb
 
 import ev_fit
 import gof
+import helper
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
 # DATA_DIR = '../data/MIDAS/'
@@ -53,7 +54,9 @@ LR_RES = ['slope', 'intercept', 'rvalue', 'pvalue', 'stderr']
 DTYPE = 'float32'
 
 HOURLY_CHUNKS = {'time': -1, 'latitude': 16, 'longitude': 16}
-ANNUAL_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 45*4, 'longitude': 45*4}  # 4 cells: 1 degree
+# 4 cells: 1 degree
+ANNUAL_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 45*4, 'longitude': 45*4}
+ANNUAL_CHUNKS_1DEG = {'year': -1, 'duration': -1, 'latitude': 30, 'longitude': 30}
 EXTRACT_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 4, 'longitude': 4}
 GAUGES_CHUNKS = {'year': -1, 'duration':-1, 'station': 200}
 GEN_FLOAT_ENCODING = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
@@ -61,21 +64,6 @@ ANNUAL_ENCODING = {'annual_max': GEN_FLOAT_ENCODING,
                    'duration': {'dtype': DTYPE},
                    'latitude': {'dtype': DTYPE},
                    'longitude': {'dtype': DTYPE}}
-
-
-def ds_resamp(ds, res):
-    # print(scaling_ratio)
-    new_lat = ds['latitude'].values[::res]
-    new_long = ds['longitude'].values[::res]
-    # print(new_long)
-    return ds.load().interp(latitude=new_lat, longitude=new_long)
-
-
-def gev_mle_ravel(ds):
-    arr = ds['annual_max'].values.ravel()
-    print(len(arr))
-    params = scipy.stats.genextreme.fit(arr)
-    return params
 
 
 def step1_annual_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res):
@@ -96,12 +84,20 @@ def step1_annual_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res
     return xr.concat(annual_maxs, 'duration')
 
 
-def step21_rank_ecdf(ds_ams):
+def step21_pole_trim(ds):
+    # remove north pole to get a dividable latitude number
+    lat_second = ds['latitude'][1].item()
+    lat_last = ds['latitude'][-1].item()
+    ds = ds.sel(latitude=slice(lat_second, lat_last))
+    return(ds)
+
+
+def step22_rank_ecdf(ds_ams, chunks):
     """Compute the rank of AMS and the empirical probability
     """
     n_obs = ds_ams['year'].count()
     # Add rank and turn to dataset
-    ds = ev_fit.rank_ams(ds_ams['annual_max'], ANNUAL_CHUNKS, DTYPE)
+    ds = ev_fit.rank_ams(ds_ams['annual_max'], chunks, DTYPE)
     # Empirical probability
     ds['ecdf_weibull'] = ev_fit.ecdf_weibull(ds['rank'], n_obs)
     ds['ecdf_hosking'] = ev_fit.ecdf_hosking(ds['rank'], n_obs)
@@ -109,7 +105,7 @@ def step21_rank_ecdf(ds_ams):
     return ds
 
 
-def step22_fit_ev(ds):
+def step23_fit_ev(ds):
     """Fit EV using various techniques.
     Keep them along a new dimension
     """
@@ -135,6 +131,11 @@ def step22_fit_ev(ds):
     ds = xr.merge([ds, ds_fit])
     return ds
 
+
+def step25_ci(ds):
+    """Estimate confidence interval using the bootstrap method
+    """
+    return ds
 
 def step24_goodness_of_fit(ds):
     # Goodness of fit of the distribution
@@ -233,13 +234,19 @@ def main():
         # annual_maxs = step1_annual_maxs_of_roll_mean(hourly1, 'prcp_amt', 'end_time', DURATIONS_ALL, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
         # ams = step1_annual_maxs_of_roll_mean(hourly2, 'precipitation', 'time', DURATIONS_ALL, TEMP_RES).chunk(ANNUAL_CHUNKS)
         # print(ams)
-        # amax_path1 = os.path.join(DATA_DIR, ANNUAL_FILE)
-        # ams1 = xr.open_zarr(amax_path1)
+        amax_path1 = os.path.join(DATA_DIR, ANNUAL_FILE)
+        ams1 = xr.open_zarr(amax_path1)
+
+        # reshape to 1 deg
+        # ds_trimmed = step21_pole_trim(ams1)
+        # print(ds_trimmed)
+        # ds_r = helper.da_pool(ds_trimmed['annual_max'], .25, 1).to_dataset().chunk(ANNUAL_CHUNKS_1DEG)
+        # print(ds_r)
 
         # Rank # 
-        ams_path = os.path.join(DATA_DIR, ANNUAL_FILE)
-        ams = xr.open_zarr(ams_path)
-        ds_ranked = step21_rank_ecdf(ams)
+        # ams_path = os.path.join(DATA_DIR, ANNUAL_FILE)
+        # ams = xr.open_zarr(ams_path)
+        ds_ranked = step22_rank_ecdf(ams1, ANNUAL_CHUNKS)
         # print(ds_ranked)
         ranked_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
         encoding = {v:GEN_FLOAT_ENCODING for v in ds_ranked.data_vars.keys()}
@@ -247,21 +254,30 @@ def main():
 
         # fit EV #
         ds_ranked = xr.open_zarr(ranked_path)#.loc[EXTRACT]
-        ds_fitted = step22_fit_ev(ds_ranked)
+        ds_fitted = step23_fit_ev(ds_ranked)
         fitted_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('fitted'))
         encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         ds_fitted.to_zarr(fitted_path, mode='w', encoding=encoding)
         # print(ds_fitted)
 
         # GoF test #
-        ds_fitted = xr.open_zarr(fitted_path)
-        ds_gof = step24_goodness_of_fit(ds_fitted)
-        gof_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof'))
-        encoding = {v:GEN_FLOAT_ENCODING for v in ds_gof.data_vars.keys()}
-        ds_gof.to_zarr(gof_path, mode='w', encoding=encoding)
+        # ds_fitted = xr.open_zarr(fitted_path)
+        # ds_gof = step24_goodness_of_fit(ds_fitted)
+        # gof_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof_1'))
+        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_gof.data_vars.keys()}
+        # ds_gof.to_zarr(gof_path, mode='w', encoding=encoding)
+
 
         # ds_gof = xr.open_zarr(gof_path)
         # print(ds_gof.load())
+        # print(ds_gof['KS_D'].mean(dim=['latitude', 'longitude', 'duration']).load())
+        # print(ds_gof['shape'].mean(dim=['latitude', 'longitude']).load())
+        # print(ds_gof['shape'].std(dim=['latitude', 'longitude', 'duration']).load())
+
+        # bootstrap
+        # ds_gof.sel(ev_fit)
+
+
 
         # ds_fitted = xr.open_zarr(fitted_path)#.loc[EXTRACT]
         # MAE of parameters
