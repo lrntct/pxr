@@ -110,43 +110,47 @@ def step23_fit_ev(ds):
     Keep them along a new dimension
     """
     models = [
-        # (ev_fit.frechet_mom, (ds), 'frechet_mom'),
-        # (ev_fit.gumbel_iter_linear, (ds), 'gumbel_iter_linear'),
-        # (frechet_mle_fit, (ds), 'frechet_mle'),
-        # (ev_fit.gev_mle_fit, (ds), 'gev_mle'),
         (ev_fit.gev_pwm, (ds,), 'gev_pwm'),
-        (ev_fit.gev_pwm, (ds, 0.114), 'frechet_pwm'),
+        (ev_fit.gev_pwm, (ds, -0.114), 'frechet_pwm'),
         ]
     ds_list = []
-    for fit_func, args, name in models:
-        ds_fit = xr.merge(fit_func(*args))
-        ds_fit['cdf'] = ev_fit.gev_cdf(ds['annual_max'],
-                                       ds_fit['location'],
-                                       ds_fit['scale'],
-                                       ds_fit['shape'],)
+    for fit_func, args, model_name in models:
+        # Put the parameters in a new dimension
+        param_list = []
+        for da_param in fit_func(*args):
+            da_param = da_param.expand_dims('ev_param')
+            da_param.coords['ev_param'] = [da_param.name]
+            param_list.append(da_param.rename('ev_parameter'))
+        da_params = xr.concat(param_list, dim='ev_param')
+        # Compute the corresponding CDF
+        da_cdf = ev_fit.gev_cdf(ds['annual_max'],
+                                da_params.sel(ev_param='location'),
+                                da_params.sel(ev_param='scale'),
+                                da_params.sel(ev_param='shape'),
+                                ).rename('cdf')
+        # Test whether shape is zero
+        da_z = ev_fit.z_test(da_params.sel(ev_param='shape'),
+                             ds['year'].count()).rename('Z_stat')
+        ds_fit = xr.merge([da_params, da_cdf, da_z])
         ds_fit = ds_fit.expand_dims('ev_fit')
-        ds_fit.coords['ev_fit'] = [name]
+        ds_fit.coords['ev_fit'] = [model_name]
         ds_list.append(ds_fit)
     ds_fit = xr.concat(ds_list, dim='ev_fit')
     ds = xr.merge([ds, ds_fit])
     return ds
 
 
+def step24_goodness_of_fit(ds, chunks):
+    ds['KS_D'] = gof.KS_test(ds['ecdf_weibull'], ds['cdf'])
+    ds = gof.lilliefors_Dcrit(ds, chunks)
+    return ds
+
+
 def step25_ci(ds):
     """Estimate confidence interval using the bootstrap method
     """
-    return ds
-
-def step24_goodness_of_fit(ds):
-    # Goodness of fit of the distribution
-    # da_crit, da_a2 = gof.anderson_darling(ds)
-    # Do the fitting
-    # ds = xr.merge([da_crit, da_a2, ds, ds_fit])
-    # Perform the Kolmogorov-Smirnov test
-    # ds = KS_test(ds)
-    ds['KS_D'] = gof.KS_test(ds['ecdf_weibull'], ds['cdf'])
-    ds = gof.KS_Dcrit(ds, ANNUAL_CHUNKS)
-    return ds
+    res = ev_fit.ci_bootstrap(ams, func, ci_range=0.9, n=50, **kwargs)
+    return res
 
 
 def step3_scaling(ds):
@@ -234,8 +238,8 @@ def main():
         # annual_maxs = step1_annual_maxs_of_roll_mean(hourly1, 'prcp_amt', 'end_time', DURATIONS_ALL, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
         # ams = step1_annual_maxs_of_roll_mean(hourly2, 'precipitation', 'time', DURATIONS_ALL, TEMP_RES).chunk(ANNUAL_CHUNKS)
         # print(ams)
-        amax_path1 = os.path.join(DATA_DIR, ANNUAL_FILE)
-        ams1 = xr.open_zarr(amax_path1)
+        # amax_path1 = os.path.join(DATA_DIR, ANNUAL_FILE)
+        # ams1 = xr.open_zarr(amax_path1)
 
         # reshape to 1 deg
         # ds_trimmed = step21_pole_trim(ams1)
@@ -246,11 +250,11 @@ def main():
         # Rank # 
         # ams_path = os.path.join(DATA_DIR, ANNUAL_FILE)
         # ams = xr.open_zarr(ams_path)
-        ds_ranked = step22_rank_ecdf(ams1, ANNUAL_CHUNKS)
+        # ds_ranked = step22_rank_ecdf(ams1, ANNUAL_CHUNKS)
         # print(ds_ranked)
         ranked_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
-        encoding = {v:GEN_FLOAT_ENCODING for v in ds_ranked.data_vars.keys()}
-        ds_ranked.to_zarr(ranked_path, mode='w', encoding=encoding)
+        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_ranked.data_vars.keys()}
+        # ds_ranked.to_zarr(ranked_path, mode='w', encoding=encoding)
 
         # fit EV #
         ds_ranked = xr.open_zarr(ranked_path)#.loc[EXTRACT]
@@ -258,7 +262,8 @@ def main():
         fitted_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('fitted'))
         encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         ds_fitted.to_zarr(fitted_path, mode='w', encoding=encoding)
-        # print(ds_fitted)
+        print(ds_fitted)
+
 
         # GoF test #
         # ds_fitted = xr.open_zarr(fitted_path)
