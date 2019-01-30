@@ -124,12 +124,15 @@ def gumbel_mle_fit(ds, dtype=DTYPE):
 
 
 def frechet_cdf(x, loc, scale, shape):
+    """Consider an EV type II if shape<0
+    """
     z = (x - loc) / scale
-    return np.e**(-z)**-shape
+    return np.e**(-z)**shape
 
 
 def frechet_mom(ds, shape=0.114):
     """Fit Fréchet (EV type II) using the method of moments and a fixed shape parameter.
+    EV type II when shape>0.
     Koutsoyiannis, D. (2004).
     Statistics of extremes and estimation of extreme rainfall: II.
     Empirical investigation of long rainfall records.
@@ -148,8 +151,10 @@ def frechet_mom(ds, shape=0.114):
 
 
 def gev_cdf_nonzero(x, loc, scale, shape):
+    """Consider an EV type II if shape<0
+    """
     z = (x - loc) / scale
-    return np.e**(-(1+shape*z)**-(1/shape))
+    return np.e ** (-(1-shape*z)**(1/shape))
 
 
 def gev_cdf(x, loc, scale, shape):
@@ -158,8 +163,18 @@ def gev_cdf(x, loc, scale, shape):
                     gev_cdf_nonzero(x, loc, scale, shape))
 
 
+# def b0(da_ams, da_rank, n_obs):
+#     """Estimator of the probability-weighted moment. From:
+#     Hosking, J. R. M., and James R. Wallis. 1997.
+#     “L-Moments.” In Regional Frequency Analysis, 14–43.
+#     Cambridge: Cambridge University Press.
+#     https://doi.org/10.1017/CBO9780511529443.004.
+#     """
+#     return da_ams.sum(dim=year) / n_obs
+
+
 def b_value(ds, order):
-    """b values used for GEV fitting using the PWM
+    """Estimator of the probability-weighted moment
     Hosking, J. R. M., Wallis, J. R., & Wood, E. F. (1985).
     Estimation of the Generalized Extreme-Value Distribution
     by the Method of Probability-Weighted Moments.
@@ -169,11 +184,47 @@ def b_value(ds, order):
     n_obs = ds['year'].count()
     # Hosking (1990) calls for a specific plotting position
     pr_sum = ((ds['ecdf_hosking']**order) * ds['annual_max']).sum(dim='year')
-    return (1./n_obs) * pr_sum
+    return pr_sum / n_obs
+
+
+def sample_L_moments(b0, b1, b2, b3):
+    """Sample L-moments
+    Hosking, J. R. M., and James R. Wallis. 1997.
+    “L-Moments.” In Regional Frequency Analysis, 14–43.
+    Cambridge: Cambridge University Press.
+    https://doi.org/10.1017/CBO9780511529443.004.
+    """
+    l1 = b0
+    l2 = 2 * b1 - b0
+    l3 = 6*b2 - 6*b1 + b0
+    l4 = 20*b3 - 30*b2 + 12*b1 - b0
+    return l1, l2, l3, l4
+
+
+def l_ratios(l1, l2, l3, l4):
+    """
+    """
+    LCV = l2/l1
+    Lskewness = l3/l2
+    Lkurtosis = l4/l2
+    return LCV, Lskewness, Lkurtosis
+
+
+def z_test(shape, n_obs):
+    """Test whether the shape parameter is zero.
+    Hosking, J. R. M., Wallis, J. R., & Wood, E. F. (1985).
+    Estimation of the Generalized Extreme-Value Distribution
+    by the Method of Probability-Weighted Moments.
+    Technometrics, 27(3), 251–261.
+    https://doi.org/10.1080/00401706.1985.10488049
+    """
+    return shape * (n_obs / 0.5633) ** .5
 
 
 def gev_pwm(ds, shape=None):
-    """Fit the GEV using the Method of Probability-Weighted Moments
+    """Fit the GEV using the Method of Probability-Weighted Moments.
+    EV type II when shape<0.
+
     Hosking, J. R. M., Wallis, J. R., & Wood, E. F. (1985).
     Estimation of the Generalized Extreme-Value Distribution
     by the Method of Probability-Weighted Moments.
@@ -192,11 +243,10 @@ def gev_pwm(ds, shape=None):
         da_shape = 7.859 * c + 2.9554 * c**2
     scale = ((2*b1-b0) * da_shape) / (gamma(1+da_shape) * (1-2**-da_shape))
     location = b0 + scale * (gamma(1+da_shape)-1) / da_shape
-
     return location.rename('location'), scale.rename('scale'), da_shape.rename('shape')
 
 
-def ci_bootstrap(ams, func, n=500):
+def ci_bootstrap(ams, func, ci_range=0.9, n=500, **kwargs):
     """Estimate the confidence interval (CI) using a bootstrap method, whereby:
     - n new sample are drawn with replacement from the ams sample,
     - func is applied to each sample
@@ -208,11 +258,18 @@ def ci_bootstrap(ams, func, n=500):
         sample = np.random.choice(ams, len(ams), replace=True)
         sample = sample.expand_dims('bootstrap_iter')
         sample.coords['bootstrap_iter'] = [i]
-        params_list.append(func(sample))
+        results = func(sample, **kwargs)
+        params_list.append(results)
     ds_bootstrap = xr.concat(params_list, dim='bootstrap_iter')
     print(ds_bootstrap)
-    # Apply function
-
+    # Get the confidence interval
+    l_c_lvl = (1-ci_range)/2
+    h_c_lvl = 1-lower_quantile
+    q_values = ds_bootstrap.load().quantile([l_c_lvl, h_c_lvl])
+    print(q_values)
+    # ds['Dcrit'] = xr.DataArray(ks_d, name='Dcrit',
+    #                            coords=[significance_levels],
+    #                            dims=['significance_level'])
 
 
 def gev_mle_wrapper(ams):
