@@ -300,14 +300,20 @@ def lnt(T):
     return -np.log(1 - 1/T)
 
 
-def quantile_gev(T, loc, scale, shape):
+def gumbel_quantile(T, loc, scale):
     """Return quantile (i.e, intensity)
+    """
+    return loc + scale * np.log(lnt(T))
+
+
+def gev_quantile_nonzero(T, loc, scale, shape):
+    """Consider an EV type II if shape<0
     """
     num = scale * (1 - lnt(T)**shape)
     return loc + num / shape
 
 
-def quantile_gumbel(T, loc, scale):
-    """Return quantile (i.e, intensity)
-    """
-    return loc + scale * np.log(lnt(T))
+def gev_quantile(T, loc, scale, shape):
+    return xr.where(shape == 0,
+                    gumbel_quantile(T, loc, scale),
+                    gev_quantile_nonzero(T, loc, scale, shape))
