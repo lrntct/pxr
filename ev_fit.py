@@ -76,11 +76,11 @@ def gumbel_iter_linear(ds):
     """
     # linearize
     linearize = lambda a: (np.log(np.log(1/a))).astype(DTYPE)
-    ecdf_linear = linearize(ds['ecdf_weibull'])
+    reduced_variable = linearize(ds['ecdf_gringorten'])
     # First fit. Keep only the two first returning DataArrays
     estim_slope, estim_intercept = helper.linregress(scipy.stats.linregress,
                                               ds['annual_max'],
-                                              ecdf_linear, ['year'])[:2]
+                                              reduced_variable, ['year'])[:2]
     # get provisional gumbel parameters
     loc_prov = -estim_intercept / estim_slope
     scale_prov = -1 / estim_slope
@@ -183,7 +183,9 @@ def b_value(ds, order):
     """
     n_obs = ds['year'].count()
     # Hosking (1990) calls for a specific plotting position
-    pr_sum = ((ds['ecdf_hosking']**order) * ds['annual_max']).sum(dim='year')
+    # Here we use the more common Gringorten, for consistency
+    pr_sum = ((ds['ecdf_gringorten']**order) *
+              ds['annual_max']).sum(dim='year')
     return pr_sum / n_obs
 
 
@@ -241,7 +243,7 @@ def gev_pwm(ds, shape=None):
         b2 = b_value(ds, 2)
         c = (2*b1 - b0) / (3*b2-b0) - math.log(2)/math.log(3)
         da_shape = 7.859 * c + 2.9554 * c**2
-    scale = ((2*b1-b0) * da_shape) / (gamma(1+da_shape) * (1-2**-da_shape))
+    scale = ((2*b1 - b0) * da_shape) / (gamma(1 + da_shape) * (1 - 2**-da_shape))
     location = b0 + scale * (gamma(1+da_shape)-1) / da_shape
     return location.rename('location'), scale.rename('scale'), da_shape.rename('shape')
 
@@ -263,14 +265,14 @@ def ci_bootstrap(ams, func, ci_range=0.9, n=500, **kwargs):
     ds_bootstrap = xr.concat(params_list, dim='bootstrap_iter')
     print(ds_bootstrap)
     # Get the confidence interval
-    l_c_lvl = (1-ci_range)/2
-    h_c_lvl = 1-lower_quantile
+    l_c_lvl = (1-ci_range) / 2
+    h_c_lvl = 1 - l_c_lvl
     q_values = ds_bootstrap.load().quantile([l_c_lvl, h_c_lvl])
     print(q_values)
     # ds['Dcrit'] = xr.DataArray(ks_d, name='Dcrit',
     #                            coords=[significance_levels],
     #                            dims=['significance_level'])
-
+    return q_values
 
 def gev_mle_wrapper(ams):
     try:
@@ -292,3 +294,20 @@ def gev_mle_fit(ds, dtype=DTYPE):
                                 output_dtypes=[dtype, dtype, dtype]
                                 )
     return loc.rename('location'), scale.rename('scale'), shape.rename('shape')
+
+
+def lnt(T):
+    return -np.log(1 - 1/T)
+
+
+def quantile_gev(T, loc, scale, shape):
+    """Return quantile (i.e, intensity)
+    """
+    num = scale * (1 - lnt(T)**shape)
+    return loc + num / shape
+
+
+def quantile_gumbel(T, loc, scale):
+    """Return quantile (i.e, intensity)
+    """
+    return loc + scale * np.log(lnt(T))
