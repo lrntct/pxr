@@ -11,7 +11,6 @@ import dask
 from dask.diagnostics import ProgressBar
 import zarr
 import scipy.stats
-import numba as nb
 
 import ev_fit
 import gof
@@ -99,8 +98,8 @@ def step22_rank_ecdf(ds_ams, chunks):
     # Add rank and turn to dataset
     ds = ev_fit.rank_ams(ds_ams['annual_max'], chunks, DTYPE)
     # Empirical probability
-    ds['ecdf_weibull'] = ev_fit.ecdf_weibull(ds['rank'], n_obs)
-    ds['ecdf_hosking'] = ev_fit.ecdf_hosking(ds['rank'], n_obs)
+    # ds['ecdf_weibull'] = ev_fit.ecdf_weibull(ds['rank'], n_obs)
+    # ds['ecdf_hosking'] = ev_fit.ecdf_hosking(ds['rank'], n_obs)
     ds['ecdf_gringorten'] = ev_fit.ecdf_gringorten(ds['rank'], n_obs)
     return ds
 
@@ -110,8 +109,10 @@ def step23_fit_ev(ds):
     Keep them along a new dimension
     """
     models = [
-        (ev_fit.gev_pwm, (ds,), 'gev_pwm'),
-        (ev_fit.gev_pwm, (ds, -0.114), 'frechet_pwm'),
+        (ev_fit.gumbel_pwm, (ds,), 'gumbel'),
+        (ev_fit.gev_pwm, (ds,), 'gev'),
+        (ev_fit.frechet_pwm, (ds,), 'frechet'),
+        # (ev_fit.gev_pwm, (ds, -0.114), 'gev-0.114'),
         ]
     ds_list = []
     for fit_func, args, model_name in models:
@@ -141,7 +142,7 @@ def step23_fit_ev(ds):
 
 
 def step24_goodness_of_fit(ds, chunks):
-    ds['KS_D'] = gof.KS_test(ds['ecdf_weibull'], ds['cdf'])
+    ds['KS_D'] = gof.KS_test(ds['ecdf_gringorten'], ds['cdf'])
     ds = gof.lilliefors_Dcrit(ds, chunks)
     return ds
 
@@ -250,7 +251,7 @@ def main():
         # Rank # 
         # ams_path = os.path.join(DATA_DIR, ANNUAL_FILE)
         # ams = xr.open_zarr(ams_path)
-        # ds_ranked = step22_rank_ecdf(ams1, ANNUAL_CHUNKS)
+        # ds_ranked = step22_rank_ecdf(ams, ANNUAL_CHUNKS)
         # print(ds_ranked)
         ranked_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_ranked.data_vars.keys()}
@@ -262,13 +263,13 @@ def main():
         fitted_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('fitted'))
         encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         ds_fitted.to_zarr(fitted_path, mode='w', encoding=encoding)
-        print(ds_fitted)
+        # print(ds_fitted)
 
 
         # GoF test #
         # ds_fitted = xr.open_zarr(fitted_path)
-        # ds_gof = step24_goodness_of_fit(ds_fitted)
-        # gof_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof_1'))
+        # ds_gof = step24_goodness_of_fit(ds_fitted, ANNUAL_CHUNKS)
+        # gof_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof'))
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_gof.data_vars.keys()}
         # ds_gof.to_zarr(gof_path, mode='w', encoding=encoding)
 
