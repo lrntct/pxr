@@ -16,6 +16,8 @@ import helper
 
 DTYPE = 'float32'
 
+EM = 0.577215664901532860606512090082
+
 def rank_ams(da_ams, chunks, dtype):
     """Rank the annual maxs in in ascending order
     """
@@ -64,7 +66,7 @@ def gumbel_mom(ds):
     std = ds['annual_max'].std(dim='year')
     loc = (mean - (magic_number1 * std)).rename('location')
     scale = (magic_number2 * std).rename('scale')
-    return loc, scale
+    return loc, scale, 0
 
 
 def gumbel_iter_linear(ds):
@@ -124,7 +126,7 @@ def gumbel_mle_fit(ds, dtype=DTYPE):
 
 
 def frechet_cdf(x, loc, scale, shape):
-    """Consider an EV type II if shape<0
+    """
     """
     z = (x - loc) / scale
     return np.e**(-z)**shape
@@ -148,6 +150,138 @@ def frechet_mom(ds, shape=0.114):
     loc = ((mean/scale) - c3).rename('location')
     da_shape = xr.full_like(mean, shape).rename('shape')
     return loc, scale, da_shape
+
+
+def gumbel_scale(l2):
+    return l2 / math.log(2)
+
+
+def gumbel_loc(l1, scale):
+    return l1 - EM * scale
+
+
+def gev_scale(l2, shape):
+    """
+    EV type II when shape<0.
+    Hosking, J. R. M., & Wallis, J. R. (1997).
+    Appendix: L-moments for some specific distributions.
+    In Regional Frequency Analysis (pp. 191–209).
+    Cambridge: Cambridge University Press.
+    https://doi.org/10.1017/CBO9780511529443.012
+    """
+    return (l2 * shape) / (gamma(1 + shape) * (1 - 2**-shape))
+
+
+def gev_loc(l1, scale, shape):
+    """
+    EV type II when shape<0.
+    Hosking, J. R. M., & Wallis, J. R. (1997).
+    Appendix: L-moments for some specific distributions.
+    In Regional Frequency Analysis (pp. 191–209).
+    Cambridge: Cambridge University Press.
+    https://doi.org/10.1017/CBO9780511529443.012
+    """
+    return l1 - scale * ((1 - gamma(1 + shape)) / shape)
+
+
+def gev_shape(b0, b1, b2):
+    """
+    EV type II when shape<0.
+    Hosking, J. R. M., Wallis, J. R., & Wood, E. F. (1985).
+    Estimation of the Generalized Extreme-Value Distribution
+    by the Method of Probability-Weighted Moments.
+    Technometrics, 27(3), 251–261.
+    https://doi.org/10.1080/00401706.1985.10488049
+    """
+    c = (2*b1 - b0) / (3*b2-b0) - math.log(2) / math.log(3)
+    return 7.859 * c + 2.9554 * c**2
+
+
+def gumbel_pwm(ds):
+    """
+    Hosking, J. R. M., & Wallis, J. R. (1997).
+    Appendix: L-moments for some specific distributions.
+    In Regional Frequency Analysis (pp. 191–209).
+    Cambridge: Cambridge University Press.
+    https://doi.org/10.1017/CBO9780511529443.012
+    """
+    b0 = b_value(ds, 0)
+    b1 = b_value(ds, 1)
+    l1 = b0
+    l2 = 2 * b1 - b0
+    scale = gumbel_scale(l2)
+    loc = gumbel_loc(l1, scale)
+    # return shape = 0 for consistency
+    shape = xr.full_like(scale, 0).rename('shape')
+    return loc.rename('location'), scale.rename('scale'), shape
+
+
+def frechet_pwm(ds):
+    """According to [1], the parameters are estimated the
+    same way as the GEV, the shape is just capped to zero.
+    Fit according to [2].
+
+    [1] Koutsoyiannis, D. (2004).
+    Statistics of extremes and estimation of extreme rainfall: II.
+    Empirical investigation of long rainfall records.
+    Hydrological Sciences Journal, 49(4).
+    https://doi.org/10.1623/hysj.49.4.591.54424
+    [2] Hosking, J. R. M., & Wallis, J. R. (1997).
+    Appendix: L-moments for some specific distributions.
+    In Regional Frequency Analysis (pp. 191–209).
+    Cambridge: Cambridge University Press.
+    https://doi.org/10.1017/CBO9780511529443.012
+    """
+    b0 = b_value(ds, 0)
+    b1 = b_value(ds, 1)
+    b2 = b_value(ds, 2)
+    l1 = b0
+    l2 = 2 * b1 - b0
+
+    raw_shape = gev_shape(b0, b1, b2)
+    # Shape must be negative for Fréchet
+    shape = xr.ufuncs.fmin(raw_shape, 0)
+    # shape = xr.where(raw_shape >= 0,
+    #                  xr.full_like(raw_shape, 0),
+    #                  raw_shape)
+    # print(shape)
+    scale = xr.where(shape == 0,
+                     gumbel_scale(l2),
+                     gev_scale(l2, shape))
+    loc = xr.where(shape == 0,
+                   gumbel_loc(l1, scale),
+                   gev_loc(l1, scale, shape))
+
+    return loc.rename('location'), scale.rename('scale'), shape.rename('shape')
+
+
+def gev_pwm(ds, shape=None):
+    """Fit the GEV using the Method of Probability-Weighted Moments.
+    EV type II when shape<0.
+
+    Hosking, J. R. M., Wallis, J. R., & Wood, E. F. (1985).
+    Estimation of the Generalized Extreme-Value Distribution
+    by the Method of Probability-Weighted Moments.
+    Technometrics, 27(3), 251–261.
+    https://doi.org/10.1080/00401706.1985.10488049
+    """
+    b0 = b_value(ds, 0)
+    b1 = b_value(ds, 1)
+    l1 = b0
+    l2 = 2 * b1 - b0
+
+    if shape:
+        da_shape = xr.full_like(b1, shape)
+    else:
+        b2 = b_value(ds, 2)
+        da_shape = gev_shape(b0, b1, b2)
+    scale = xr.where(da_shape == 0,
+                     gumbel_scale(l2),
+                     gev_scale(l2, da_shape))
+    loc = xr.where(da_shape == 0,
+                   gumbel_loc(l1, scale),
+                   gev_loc(l1, scale, da_shape))
+    return loc.rename('location'), scale.rename('scale'), da_shape.rename('shape')
 
 
 def gev_cdf_nonzero(x, loc, scale, shape):
@@ -206,9 +340,9 @@ def sample_L_moments(b0, b1, b2, b3):
 def l_ratios(l1, l2, l3, l4):
     """
     """
-    LCV = l2/l1
-    Lskewness = l3/l2
-    Lkurtosis = l4/l2
+    LCV = l2 / l1
+    Lskewness = l3 / l2
+    Lkurtosis = l4 / l2
     return LCV, Lskewness, Lkurtosis
 
 
@@ -221,31 +355,6 @@ def z_test(shape, n_obs):
     https://doi.org/10.1080/00401706.1985.10488049
     """
     return shape * (n_obs / 0.5633) ** .5
-
-
-def gev_pwm(ds, shape=None):
-    """Fit the GEV using the Method of Probability-Weighted Moments.
-    EV type II when shape<0.
-
-    Hosking, J. R. M., Wallis, J. R., & Wood, E. F. (1985).
-    Estimation of the Generalized Extreme-Value Distribution
-    by the Method of Probability-Weighted Moments.
-    Technometrics, 27(3), 251–261.
-    https://doi.org/10.1080/00401706.1985.10488049
-    """
-    # b0 = ds['annual_max'].mean(dim='year')
-    b0 = b_value(ds, 0)
-    b1 = b_value(ds, 1)
-
-    if shape:
-        da_shape = xr.full_like(b1, shape)
-    else:
-        b2 = b_value(ds, 2)
-        c = (2*b1 - b0) / (3*b2-b0) - math.log(2)/math.log(3)
-        da_shape = 7.859 * c + 2.9554 * c**2
-    scale = ((2*b1 - b0) * da_shape) / (gamma(1 + da_shape) * (1 - 2**-da_shape))
-    location = b0 + scale * (gamma(1+da_shape)-1) / da_shape
-    return location.rename('location'), scale.rename('scale'), da_shape.rename('shape')
 
 
 def ci_bootstrap(ams, func, ci_range=0.9, n=500, **kwargs):
@@ -303,7 +412,7 @@ def lnt(T):
 def gumbel_quantile(T, loc, scale):
     """Return quantile (i.e, intensity)
     """
-    return loc + scale * np.log(lnt(T))
+    return loc - scale * np.log(lnt(T))
 
 
 def gev_quantile_nonzero(T, loc, scale, shape):
@@ -314,6 +423,11 @@ def gev_quantile_nonzero(T, loc, scale, shape):
 
 
 def gev_quantile(T, loc, scale, shape):
+    """Overeem, Aart, Adri Buishand, and Iwan Holleman. 2008.
+    “Rainfall Depth-Duration-Frequency Curves and Their Uncertainties.”
+    Journal of Hydrology 348 (1–2): 124–34.
+    https://doi.org/10.1016/j.jhydrol.2007.09.044.
+    """
     return xr.where(shape == 0,
                     gumbel_quantile(T, loc, scale),
                     gev_quantile_nonzero(T, loc, scale, shape))
