@@ -17,13 +17,16 @@ import shapely.geometry
 import seaborn as sns
 import cartopy as ctpy
 import scipy.stats
+
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import matplotlib.pyplot as plt
 
+import ev_fit
 
-DATA_DIR = '../data'
+
+DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
 # HOURLY_FILE = 'era5_2000-2012_precip.zarr'
-ERA_ANNUAL_FILE = 'era5_2000-2017_precip_complete.zarr'
+ERA_ANNUAL_FILE = 'era5_1979-2017_ams_fitted.zarr'
 # GAUGES_FILE = '../data/GHCN/ghcn.nc'
 # GHCN_ANNUAL_FILE = '../data/GHCN/ghcn_2000-2017_precip_scaling.nc'
 MIDAS_ANNUAL_FILE = '../data/MIDAS/midas_2000-2017_precip_scaling.nc'
@@ -72,7 +75,7 @@ def single_map(da, cbar_label, title, fig_name, center=None, reverse=False):
     """
     plt.figure(figsize=(8, 5))
     ax_p = plt.gca(projection=ctpy.crs.Robinson(), aspect='auto')
-    if center:
+    if center is not None:
         if reverse:
             cmap = 'RdBu_r'
         else:
@@ -403,35 +406,82 @@ def plot_hourly(ds, sites, fig_name):
     plt.close()
 
 
-def plot_gumbel_per_site(ds, sites, fig_name):
+def probability_plot(ds, sites, fig_name):
+    # print(ds)
     DURATION = 6
-    # extract sites values from the dataset as pandas dataframes
+    keep_var = ['ecdf_gringorten', 'annual_max', 'cdf', 'ev_parameter']
+    # extract sites values from the dataset
     dict_cdf = {}
+    ds_list = []
     for site_name, site_coord in sites.items():
-        dict_pvalues = {}
         ds_sel = ds.sel(latitude=site_coord[0],
                         longitude=site_coord[1],
                         duration=DURATION,
-                        method='nearest').drop(['latitude', 'longitude', 'duration'])
-        # Keep only wanted values as dataframe
-        keep_col = ['estim_prob', 'analytic_prob_moments', 'analytic_prob_loaiciga', 'annual_max']
-        df_cdf = ds_sel[keep_col].load().to_dataframe().set_index('annual_max', drop=True).sort_index()
-        dict_cdf[site_name] = df_cdf
+                        method='nearest', drop=True)
+        ds_sel = ds_sel.expand_dims('site')
+        ds_sel.coords['site'] = [site_name]
+        ds_list.append(ds_sel[keep_var])
+    # Split CDF into variables
+    ds_sites = xr.concat(ds_list, dim='site')
+    ds_cdf = ds_sites['cdf'].to_dataset(dim='ev_fit')
+    ds_split = xr.merge([ds_sites.drop('cdf'), ds_cdf]).drop('ev_fit')
+    # All the probabilities into one dimension
+    da_prob = ds_split.drop('annual_max').to_array('cdf', name='prob')
+    ds_prob = xr.merge([da_prob, ds_split['annual_max']])
+    # print(ds_prob)
 
-    fig, axes = plt.subplots(1, 2, sharey=True, figsize=(8,4))
-    for (site_name, df), ax in zip(dict_cdf.items(), axes):
-        dict_cdf[site_name].plot(linestyle=None, marker='o', markersize=1.5,
-                                 title=site_name, ax=ax, legend=False)
+    # compute quantiles for a range of years
+    ds_params = ds_sites['ev_parameter'].to_dataset(dim='ev_param')
+    # print(ds_params)
+    t = np.arange(2, 10000)
+    return_periods = xr.DataArray(t, dims=['T'], coords={'T': t})
+    # print(return_periods)
+    da_q = ev_fit.gev_quantile(return_periods,
+                                       ds_params['location'],
+                                       ds_params['scale'],
+                                       ds_params['shape']
+                              ).rename('intensity')
+    # print(da_q)
+    # to Pandas dataframe
+    df_cdf = (ds_prob
+              .to_dataframe()
+              .reset_index()
+              .drop('year', axis='columns')
+            )
+    # prob to return period
+    df_cdf['T'] = 1/(1-df_cdf['prob'])
+    df_cdf = df_cdf.sort_values('T')
+
+    # plot
+    colwrap = 3
+    row_num = math.ceil(len(sites) / colwrap)
+    fig, axes = plt.subplots(row_num, colwrap, sharey=False, sharex=True, figsize=(9, 7))
+    for ax, site_name in zip(axes.flat, sites.keys()):
+       df_site = df_cdf.loc[df_cdf['site'] == site_name]
+       # ECDF
+        ecdf = df_site.loc[df_cdf['cdf'].str.startswith('ecdf_')]
+        ecdf.plot(x='T', y='annual_max', logx=True, legend=False, ax=ax,
+                  linestyle='', lw=0.1, marker='x', markeredgecolor='.1',
+                  markersize=5, label='ecdf')
+        # CDFs
+        gumbel = da_q.sel(site=site_name, ev_fit='gumbel').to_dataframe().reset_index()
+        gumbel.plot(x='T', y='intensity', logx=True, legend=False, ax=ax,
+                    c='.2', linewidth=1, linestyle='--', label='Gumbel')
+        gev = da_q.sel(site=site_name, ev_fit='gev').to_dataframe().reset_index()
+        gev.plot(x='T', y='intensity', logx=True, legend=False, ax=ax,
+                       label='GEV')
+        frechet = da_q.sel(site=site_name, ev_fit='frechet').to_dataframe().reset_index()
+        frechet.plot(x='T', y='intensity', logx=True, legend=False, ax=ax,
+                       label='Fréchet')
+
+        ax.set_title(site_name)
+        ax.set_ylabel('i (mm/h)')
+        ax.set_xlabel('return period (years)')
         lines, labels = ax.get_legend_handles_labels()
-        ax.set_ylabel('Cumulative probability')
-        txt = "Dcrit = {:.2f}".format(ds['Dcrit_5pct'].values)
-        ax.text(0.65, 0.10, txt, horizontalalignment='left', backgroundcolor='white',
-                verticalalignment='center', transform=ax.transAxes, size=10)
-    fig.suptitle('Cumulative probability for a duration of {} hours'.format(DURATION))
-    lgd_labels = ['Estimated CDF',
-                  'Analytic CDF (method of moments)',
-                  'Analytic CDF (iterative method)']
+
+    lgd_labels = ['Observed values', 'Gumbel', 'GEV', 'Fréchet']
     lgd = fig.legend(lines, lgd_labels, loc='lower center', ncol=4)
+
     # plt.tight_layout()
     plt.subplots_adjust(bottom=.24, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
@@ -570,6 +620,28 @@ def fig_map_anderson(ds):
                fig_name='A2_2000-2017_1pct_24h.png')
 
 
+def fig_map_KS(ds):
+    """create maps of the Kolmogorov-Smirnov / Lilliefors test statistic
+    """
+    alpha = 0.05
+    DURATION = 2
+    Dcrit = ds['Dcrit'].sel(significance_level=alpha).values
+
+    for ev_name in ds['ev_fit'].values:
+        da_sel = ds['KS_D'].sel(ev_fit=ev_name)
+        D_mean = da_sel.mean(dim='duration')
+        print(D_mean.where(D_mean > Dcrit).count(dim=['latitude', 'longitude']).mean().compute())
+        # print(da_sel)
+        ev_name = ev_name.decode('utf8')
+        single_map(D_mean,
+                   title='Lilliefors test statistic (1979-2017, mean on $d$, {}, $\\alpha=${})'.format(
+                       ev_name, alpha),
+                   cbar_label='$D$',
+                   center=Dcrit,
+                   reverse=True,
+                   fig_name='D_1979-2017_{}_dmean_{}.png'.format(alpha, ev_name))
+
+
 def table_anderson_quantiles(ds, dim):
     # print(ds['scaling_extent'].load())
     q = ds['A2'].load().quantile([0.01, 0.5, 0.95, 0.99], dim=dim)
@@ -593,6 +665,23 @@ def fig_maps_gumbel1h(ds):
                    ['Location $\mu$', 'Scale $\sigma$'],
                    'Parameter value', 'gumbel_params_1h_2000-2017.png',
                    duration=1)
+
+
+def fig_maps_gev24h(ds):
+        multi_maps(ds, ['location', 'scale', 'shape'],
+                   ['Location $\mu$', 'Scale $\sigma$', 'Shape $\kappa$'],
+                    'Parameter value', 'gev_params_24h_1979-2017.png')
+
+
+def fig_map_shape(ds):
+    """
+    """
+    single_map(ds['shape'].sel(duration=24),
+               title='GEV shape $\kappa$ for d=24h, 1979-2017',
+               cbar_label='$\kappa$',
+               center=0,
+               reverse=True,
+               fig_name='gev_shape_1979-2017_24h_100.png')
 
 
 def table_rsquared_quantiles(ds, dim):
@@ -1024,8 +1113,9 @@ def scatter_intensity(ds_era, ds_gauges):
         intensity = intensity.expand_dims('T')
         intensity.coords['T'] = [T]
         da_list.append(intensity)
-    da_i = xr.concat(da_list, dim='T')
-    print(da_i.load())
+    da_i = xr.concat(da_list, dim='T').drop(['latitude', 'longitude', 'src_name'])
+    df_i = da_i.to_dataframe().reset_index()
+    print(df_i.head())
 
 
 def a2_map(a2_values, years):
@@ -1046,18 +1136,22 @@ def a2_map(a2_values, years):
 
 
 def main():
-    ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_ANNUAL_FILE)).sel(gumbel_fit=b'scipy', drop=True)
+    ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_ANNUAL_FILE))#.sel(ev_fit='gev_pwm', drop=True)
     ds_midas = xr.open_dataset(MIDAS_ANNUAL_FILE).sel(gumbel_fit='scipy', drop=True)
     # ds_midas_pairs = xr.open_dataset(MIDAS_PAIRS).sel(gumbel_fit='scipy', drop=True)
-    # print(ds_era['longitude'].load())
+    # print(ds_era['shape'].sel(duration=24).load().quantile([0.05, 0.95]))
+    # print(ds_era['shape'].sel(duration=24).mean().load())
     # print(ds_midas['longitude'].load())
     # station_permut(ds_midas)
 
+    # fig_map_KS(ds_era)
+    # print(ds_era['shape'].sel(ev_fit=b'gev_pwm').mean().compute())
 
     # fig_map_anderson(ds_era)
     # table_anderson_quantiles(ds_midas, dim=None)
     # fig_maps_gumbel24h(ds_era)
     # fig_maps_gumbel1h(ds_era)
+    # fig_map_shape(ds_era)
     # table_count_nogumbelfit(ds_era)
     # table_count_noscalingfit(ds_era)
     # table_r_quantiles(ds_era, dim=['longitude', 'latitude'])
@@ -1094,7 +1188,7 @@ def main():
     # plot_gauges_data(ds_ghcn, 2000, 2012 'gauges.png')
 
     # print((~np.isfinite(ds)).sum().compute())
-    # plot_gumbel_per_site(ds_era, STUDY_SITES, 'sites_gumbel.png')
+    probability_plot(ds_era, STUDY_SITES, 'sites_probability.pdf')
     # use_stations = [b'BRIZE NORTON', b'LITTLE RISSINGTON',
     #                 b'LARKHILL', b'BOSCOMBE DOWN']
     # ds_points = {'MIDAS': (ds_midas.sel(scaling_extent='daily'), 'src_name')}
@@ -1105,8 +1199,8 @@ def main():
     # plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017-11sites.pdf')
 
     ##############
-    scatter_intensity(ds_era.sel(scaling_extent=b'all', drop=True),
-                      ds_midas.sel(scaling_extent='all', drop=True))
+    # scatter_intensity(ds_era.sel(scaling_extent=b'all', drop=True),
+    #                   ds_midas.sel(scaling_extent='all', drop=True))
 
     # a2_values = xr.open_dataset(os.path.join(DATA_DIR, '../data/era5_1979-2017_precip_a2_24.nc'))
     # a2_map(a2_values, ds_era['year'])
@@ -1116,10 +1210,26 @@ def main():
     #            cbar_label='Pearson correlation coefficient',
     #            fig_name='pearsonr.png')
 
-    # single_map(ds_era['scaling_spearmanr'],
-    #        title="Parameter scaling correlation",
-    #        cbar_label="Spearman's $\\rho$",
-    #        fig_name='spearmanr.png')
+    # single_map(ds_era['Z_stat'].sel(duration=24),
+    #         title="Is $\kappa = 0$?",
+    #         cbar_label="Z",
+    #         center=0,
+    #         reverse=True,
+    #         fig_name='Z_stat_24h.png')
+
+    # single_map(ds_era['Z_stat'].sel(duration=1),
+    #            title="Is $\kappa = 0$?",
+    #            cbar_label="Z",
+    #            center=0,
+    #            reverse=True,
+    #            fig_name='Z_stat_1h.png')
+
+    # single_map(ds_era['Z_stat'].mean(dim='duration'),
+    #            title="Is $\kappa = 0$?",
+    #            cbar_label="Z",
+    #            center=0,
+    #            reverse=True,
+    #            fig_name='Z_stat_mean.png')
 
     # multi_maps(ds_era, ['ks_loaiciga', 'ks_moments'],
     #            ['Fitting accuracy of the iterative method (d=24h)', 'Fitting accuracy of the method of moments (d=24h)'],
