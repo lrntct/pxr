@@ -16,17 +16,24 @@ import helper
 
 DTYPE = 'float32'
 
+# Euler-Mascheroni constant
 EM = 0.577215664901532860606512090082
 
-def rank_ams(da_ams, chunks, dtype):
+
+def rank_ams(da_ams, dtype):
     """Rank the annual maxs in in ascending order
     """
     # Ranking does not work on dask array
     asc_rank = da_ams.load().rank(dim='year')
     # make sure that the resulting array is in the same order as the original
     ranks = asc_rank.rename('rank').astype(dtype).transpose(*da_ams.dims)
-    # Merge arrays in a single dataset, set the dask chunks
-    return xr.merge([da_ams, ranks]).chunk(chunks)
+    return ranks
+
+
+def plotting_position(rank, n_obs, a, b):
+    """General plotting position
+    """
+    return (rank - a) / (n_obs + b)
 
 
 def ecdf_weibull(rank, n_obs):
@@ -37,13 +44,13 @@ def ecdf_weibull(rank, n_obs):
     Journal of Applied Meteorology and Climatology 45 (2): 334–40.
     https://doi.org/10.1175/JAM2349.1.
     """
-    return rank / (n_obs+1)
+    return plotting_position(rank, n_obs, 0, 1)
 
 
 def ecdf_gringorten(rank, n_obs):
     """Return the Gringorten plotting position
     """
-    return (rank - 0.44) / (n_obs + 0.12)
+    return plotting_position(rank, n_obs, 0.44, .12)
 
 
 def ecdf_hosking(rank, n_obs):
@@ -53,7 +60,7 @@ def ecdf_hosking(rank, n_obs):
     Journal of the Royal Statistical Society: Series B (Methodological), 52(1), 105–124.
     https://doi.org/10.1111/j.2517-6161.1990.tb01775.x
     """
-    return (rank - 0.35) / n_obs
+    return plotting_position(rank, n_obs, 0.35, 0)
 
 
 def gumbel_mom(ds):
@@ -193,7 +200,7 @@ def gev_shape(b0, b1, b2):
     Technometrics, 27(3), 251–261.
     https://doi.org/10.1080/00401706.1985.10488049
     """
-    c = (2*b1 - b0) / (3*b2-b0) - math.log(2) / math.log(3)
+    c = (2*b1 - b0) / (3*b2 - b0) - math.log(2) / math.log(3)
     return 7.859 * c + 2.9554 * c**2
 
 
@@ -297,14 +304,43 @@ def gev_cdf(x, loc, scale, shape):
                     gev_cdf_nonzero(x, loc, scale, shape))
 
 
-# def b0(da_ams, da_rank, n_obs):
+def b0(ams, axis, n_obs):
+    """Estimator of the probability-weighted moment. From:
+    Hosking, J. R. M., and James R. Wallis. 1997.
+    “L-Moments.” In Regional Frequency Analysis, 14–43.
+    Cambridge: Cambridge University Press.
+    https://doi.org/10.1017/CBO9780511529443.004.
+    """
+    return ams.sum(axis=axis) / n_obs
+
+
+# def b1(ams, rank, axis, n_obs):
 #     """Estimator of the probability-weighted moment. From:
 #     Hosking, J. R. M., and James R. Wallis. 1997.
 #     “L-Moments.” In Regional Frequency Analysis, 14–43.
 #     Cambridge: Cambridge University Press.
 #     https://doi.org/10.1017/CBO9780511529443.004.
 #     """
-#     return da_ams.sum(dim=year) / n_obs
+#     num = rank[1:]
+#     denum = n_obs - 1
+#     return
+
+
+# def b2(ams, rank, axis, n_obs):
+#     """Estimator of the probability-weighted moment. From:
+#     Hosking, J. R. M., and James R. Wallis. 1997.
+#     “L-Moments.” In Regional Frequency Analysis, 14–43.
+#     Cambridge: Cambridge University Press.
+#     https://doi.org/10.1017/CBO9780511529443.004.
+#     """
+#     return 
+
+
+def gen_bvalue(ecdf, ams, n_obs, order, axis):
+    """Estimation of bvalue not depending on xarray
+    """
+    pr_sum = ecdf**order * ams.sum(axis=axis)
+    return pr_sum / n_obs
 
 
 def b_value(ds, order):
@@ -316,11 +352,14 @@ def b_value(ds, order):
     https://doi.org/10.1080/00401706.1985.10488049
     """
     n_obs = ds['year'].count()
+    axis = ds['annual_max'].get_index('year')
     # Hosking (1990) calls for a specific plotting position
     # Here we use the more common Gringorten, for consistency
-    pr_sum = ((ds['ecdf_gringorten']**order) *
-              ds['annual_max']).sum(dim='year')
-    return pr_sum / n_obs
+    return gen_bvalue(ecdf=ds['ecdf_gringorten'],
+                      ams=ds['annual_max'],
+                      n_obs=n_obs,
+                      order=order,
+                      axis=axis)
 
 
 def sample_L_moments(b0, b1, b2, b3):
@@ -356,32 +395,6 @@ def z_test(shape, n_obs):
     """
     return shape * (n_obs / 0.5633) ** .5
 
-
-def ci_bootstrap(ams, func, ci_range=0.9, n=500, **kwargs):
-    """Estimate the confidence interval (CI) using a bootstrap method, whereby:
-    - n new sample are drawn with replacement from the ams sample,
-    - func is applied to each sample
-    - Keep the quantiles of each results from func as CI
-    """
-    # Draw n sample
-    params_list = []
-    for i in range(n):
-        sample = np.random.choice(ams, len(ams), replace=True)
-        sample = sample.expand_dims('bootstrap_iter')
-        sample.coords['bootstrap_iter'] = [i]
-        results = func(sample, **kwargs)
-        params_list.append(results)
-    ds_bootstrap = xr.concat(params_list, dim='bootstrap_iter')
-    print(ds_bootstrap)
-    # Get the confidence interval
-    l_c_lvl = (1-ci_range) / 2
-    h_c_lvl = 1 - l_c_lvl
-    q_values = ds_bootstrap.load().quantile([l_c_lvl, h_c_lvl])
-    print(q_values)
-    # ds['Dcrit'] = xr.DataArray(ks_d, name='Dcrit',
-    #                            coords=[significance_levels],
-    #                            dims=['significance_level'])
-    return q_values
 
 def gev_mle_wrapper(ams):
     try:

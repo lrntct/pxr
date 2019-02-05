@@ -15,6 +15,8 @@ import scipy.stats
 import ev_fit
 import gof
 import helper
+import bootstrap
+
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
 # DATA_DIR = '../data/MIDAS/'
@@ -54,7 +56,7 @@ DTYPE = 'float32'
 
 HOURLY_CHUNKS = {'time': -1, 'latitude': 16, 'longitude': 16}
 # 4 cells: 1 degree
-ANNUAL_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 45*4, 'longitude': 45*4}
+ANNUAL_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 30*4, 'longitude': 30*4}
 ANNUAL_CHUNKS_1DEG = {'year': -1, 'duration': -1, 'latitude': 30, 'longitude': 30}
 EXTRACT_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 4, 'longitude': 4}
 GAUGES_CHUNKS = {'year': -1, 'duration':-1, 'station': 200}
@@ -95,8 +97,10 @@ def step22_rank_ecdf(ds_ams, chunks):
     """Compute the rank of AMS and the empirical probability
     """
     n_obs = ds_ams['year'].count()
-    # Add rank and turn to dataset
-    ds = ev_fit.rank_ams(ds_ams['annual_max'], chunks, DTYPE)
+    da_ams = ds_ams['annual_max']
+    da_ranks = ev_fit.rank_ams(da_ams, DTYPE)
+    # Merge arrays in a single dataset, set the dask chunks
+    ds = xr.merge([da_ams, da_ranks]).chunk(chunks)
     # Empirical probability
     # ds['ecdf_weibull'] = ev_fit.ecdf_weibull(ds['rank'], n_obs)
     # ds['ecdf_hosking'] = ev_fit.ecdf_hosking(ds['rank'], n_obs)
@@ -109,8 +113,8 @@ def step23_fit_ev(ds):
     Keep them along a new dimension
     """
     models = [
-        (ev_fit.gumbel_pwm, (ds,), 'gumbel'),
-        (ev_fit.gev_pwm, (ds,), 'gev'),
+        # (ev_fit.gumbel_pwm, (ds,), 'gumbel'),
+        # (ev_fit.gev_pwm, (ds,), 'gev'),
         (ev_fit.frechet_pwm, (ds,), 'frechet'),
         # (ev_fit.gev_pwm, (ds, -0.114), 'gev-0.114'),
         ]
@@ -147,11 +151,19 @@ def step24_goodness_of_fit(ds, chunks):
     return ds
 
 
-def step25_ci(ds):
+def step31_ci_draw_samples(ds):
     """Estimate confidence interval using the bootstrap method
     """
-    res = ev_fit.ci_bootstrap(ams, func, ci_range=0.9, n=50, **kwargs)
-    return res
+    # ds_bootstrap = bootstrap.draw_samples(ds, DTYPE, n_sample=10)
+    ds_bootstrap = bootstrap.apply_ci(ds, DTYPE, n_sample=10, ci_range=0.9)
+    return ds_bootstrap
+
+
+# def step31_ci_draw_samples(ds):
+#     """Estimate confidence interval using the bootstrap method
+#     """
+#     ds_bootstrap = bootstrap.draw_samples(ds, DTYPE, n=10)
+#     return ds_bootstrap
 
 
 def step3_scaling(ds):
@@ -253,36 +265,31 @@ def main():
         # ams = xr.open_zarr(ams_path)
         # ds_ranked = step22_rank_ecdf(ams, ANNUAL_CHUNKS)
         # print(ds_ranked)
-        ranked_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
+        # ranked_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_ranked.data_vars.keys()}
         # ds_ranked.to_zarr(ranked_path, mode='w', encoding=encoding)
 
         # fit EV #
-        ds_ranked = xr.open_zarr(ranked_path)#.loc[EXTRACT]
-        ds_fitted = step23_fit_ev(ds_ranked)
-        fitted_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('fitted'))
-        encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        ds_fitted.to_zarr(fitted_path, mode='w', encoding=encoding)
+        # ds_ranked = xr.open_zarr(ranked_path)#.loc[EXTRACT]
+        # ds_fitted = step23_fit_ev(ds_ranked)
+        # fitted_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('fitted'))
+        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
+        # ds_fitted.to_zarr(fitted_path, mode='w', encoding=encoding)
         # print(ds_fitted)
 
-
-        # GoF test #
+        # GoF #
         # ds_fitted = xr.open_zarr(fitted_path)
         # ds_gof = step24_goodness_of_fit(ds_fitted, ANNUAL_CHUNKS)
-        # gof_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof'))
+        gof_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof'))
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_gof.data_vars.keys()}
         # ds_gof.to_zarr(gof_path, mode='w', encoding=encoding)
 
-
-        # ds_gof = xr.open_zarr(gof_path)
-        # print(ds_gof.load())
-        # print(ds_gof['KS_D'].mean(dim=['latitude', 'longitude', 'duration']).load())
-        # print(ds_gof['shape'].mean(dim=['latitude', 'longitude']).load())
-        # print(ds_gof['shape'].std(dim=['latitude', 'longitude', 'duration']).load())
-
-        # bootstrap
-        # ds_gof.sel(ev_fit)
-
+        # confidence interval #
+        ds_gof = xr.open_zarr(gof_path)
+        ds_samples = step31_ci_draw_samples(ds_gof)
+        ci_samples_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ci_samples'))
+        encoding = {v: GEN_FLOAT_ENCODING for v in ds_samples.data_vars.keys()}
+        ds_samples.to_zarr(ci_samples_path, mode='w', encoding=encoding)
 
 
         # ds_fitted = xr.open_zarr(fitted_path)#.loc[EXTRACT]
