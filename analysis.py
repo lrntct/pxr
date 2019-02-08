@@ -155,7 +155,7 @@ def step31_ci_draw_samples(ds):
     """Estimate confidence interval using the bootstrap method
     """
     # ds_bootstrap = bootstrap.draw_samples(ds, DTYPE, n_sample=10)
-    ds_bootstrap = bootstrap.apply_ci(ds, DTYPE, n_sample=10, ci_range=0.9)
+    ds_bootstrap = bootstrap.ci_gev(ds, DTYPE, n_sample=10, ci_range=0.9)
     return ds_bootstrap
 
 
