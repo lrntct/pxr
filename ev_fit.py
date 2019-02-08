@@ -262,6 +262,27 @@ def frechet_pwm(ds):
     return loc.rename('location'), scale.rename('scale'), shape.rename('shape')
 
 
+def gev_gufunc(ams, ecdf, n_obs, ax_year, shape=None):
+    """
+    """
+    b0 = gen_bvalue(ecdf, ams, n_obs, 0, ax_year)
+    b1 = gen_bvalue(ecdf, ams, n_obs, 1, ax_year)
+    l1 = b0
+    l2 = 2 * b1 - b0
+    if shape:
+        arr_shape = np.full_like(b0, shape)
+    else:
+        b2 = gen_bvalue(ecdf, ams, n_obs, 2, ax_year)
+        arr_shape = gev_shape(b0, b1, b2)
+    arr_scale = np.where(arr_shape == 0,
+                         gumbel_scale(l2),
+                         gev_scale(l2, arr_shape))
+    arr_loc = np.where(arr_shape == 0,
+                       gumbel_loc(l1, arr_scale),
+                       gev_loc(l1, arr_scale, arr_shape))
+    return arr_loc, arr_scale, arr_shape
+
+
 def gev_pwm(ds, shape=None):
     """Fit the GEV using the Method of Probability-Weighted Moments.
     EV type II when shape<0.
@@ -272,23 +293,12 @@ def gev_pwm(ds, shape=None):
     Technometrics, 27(3), 251–261.
     https://doi.org/10.1080/00401706.1985.10488049
     """
-    b0 = b_value(ds, 0)
-    b1 = b_value(ds, 1)
-    l1 = b0
-    l2 = 2 * b1 - b0
-
-    if shape:
-        da_shape = xr.full_like(b1, shape)
-    else:
-        b2 = b_value(ds, 2)
-        da_shape = gev_shape(b0, b1, b2)
-    scale = xr.where(da_shape == 0,
-                     gumbel_scale(l2),
-                     gev_scale(l2, da_shape))
-    loc = xr.where(da_shape == 0,
-                   gumbel_loc(l1, scale),
-                   gev_loc(l1, scale, da_shape))
-    return loc.rename('location'), scale.rename('scale'), da_shape.rename('shape')
+    n_obs = len(ds['year'])
+    ams = ds['annual_max']
+    ax_year = ams.get_index('year')
+    ecdf = ds['ecdf_gringorten']
+    da_loc, da_scale, da_shape = gev_gufunc(ams, ecdf, n_obs, ax_year, shape=shape)
+    return da_loc.rename('location'), da_scale.rename('scale'), da_shape.rename('shape')
 
 
 def gev_cdf_nonzero(x, loc, scale, shape):
@@ -304,42 +314,11 @@ def gev_cdf(x, loc, scale, shape):
                     gev_cdf_nonzero(x, loc, scale, shape))
 
 
-def b0(ams, axis, n_obs):
-    """Estimator of the probability-weighted moment. From:
-    Hosking, J. R. M., and James R. Wallis. 1997.
-    “L-Moments.” In Regional Frequency Analysis, 14–43.
-    Cambridge: Cambridge University Press.
-    https://doi.org/10.1017/CBO9780511529443.004.
-    """
-    return ams.sum(axis=axis) / n_obs
-
-
-# def b1(ams, rank, axis, n_obs):
-#     """Estimator of the probability-weighted moment. From:
-#     Hosking, J. R. M., and James R. Wallis. 1997.
-#     “L-Moments.” In Regional Frequency Analysis, 14–43.
-#     Cambridge: Cambridge University Press.
-#     https://doi.org/10.1017/CBO9780511529443.004.
-#     """
-#     num = rank[1:]
-#     denum = n_obs - 1
-#     return
-
-
-# def b2(ams, rank, axis, n_obs):
-#     """Estimator of the probability-weighted moment. From:
-#     Hosking, J. R. M., and James R. Wallis. 1997.
-#     “L-Moments.” In Regional Frequency Analysis, 14–43.
-#     Cambridge: Cambridge University Press.
-#     https://doi.org/10.1017/CBO9780511529443.004.
-#     """
-#     return 
-
-
 def gen_bvalue(ecdf, ams, n_obs, order, axis):
     """Estimation of bvalue not depending on xarray
     """
-    pr_sum = ecdf**order * ams.sum(axis=axis)
+    arr_sum = ams.sum(axis=axis, keepdims=True)
+    pr_sum = (ecdf**order) * arr_sum
     return pr_sum / n_obs
 
 
