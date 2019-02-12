@@ -53,7 +53,7 @@ def ecdf_gringorten(rank, n_obs):
     return plotting_position(rank, n_obs, 0.44, .12)
 
 
-def ecdf_hosking(rank, n_obs):
+def ecdf_landwehr(rank, n_obs):
     """Return the plotting position defined in:
     Hosking, J. R. M. (1990).
     L-Moments: Analysis and Estimation of Distributions Using Linear Combinations of Order Statistics.
@@ -61,6 +61,27 @@ def ecdf_hosking(rank, n_obs):
     https://doi.org/10.1111/j.2517-6161.1990.tb01775.x
     """
     return plotting_position(rank, n_obs, 0.35, 0)
+
+
+def ecdf_hosking(rank, n_obs):
+    """Return the unbiased estimator suggested by:
+    Hosking, J. R. M., and J. R. Wallis. 1995.
+    “A Comparison of Unbiased and Plotting-Position Estimators of L Moments.”
+    Water Resources Research 31 (8): 2019–25.
+    https://doi.org/10.1029/95WR01230.
+    """
+    return plotting_position(rank, n_obs, 0, 0)
+
+
+def ecdf_goda(rank, n_obs):
+    """Return the plotting position defined in:
+    Goda, Yoshimi. 2011.
+    “Plotting-Position Estimator for the L-Moment Method and Quantile Confidence Interval
+    for the GEV, GPA, and Weibull Distributions Applied for Extreme Wave Analysis.”
+    Coastal Engineering Journal 53 (2): 111–49.
+    https://doi.org/10.1142/S057856341100229X.
+    """
+    return plotting_position(rank, n_obs, 0.45, 0)
 
 
 def gumbel_mom(ds):
@@ -296,7 +317,7 @@ def gev_pwm(ds, shape=None):
     n_obs = len(ds['year'])
     ams = ds['annual_max']
     ax_year = ams.get_index('year')
-    ecdf = ds['ecdf_gringorten']
+    ecdf = ds['ecdf_goda']
     da_loc, da_scale, da_shape = gev_gufunc(ams, ecdf, n_obs, ax_year, shape=shape)
     return da_loc.rename('location'), da_scale.rename('scale'), da_shape.rename('shape')
 
@@ -334,7 +355,7 @@ def b_value(ds, order):
     axis = ds['annual_max'].get_index('year')
     # Hosking (1990) calls for a specific plotting position
     # Here we use the more common Gringorten, for consistency
-    return gen_bvalue(ecdf=ds['ecdf_gringorten'],
+    return gen_bvalue(ecdf=ds['ecdf_goda'],
                       ams=ds['annual_max'],
                       n_obs=n_obs,
                       order=order,

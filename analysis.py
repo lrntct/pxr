@@ -21,11 +21,10 @@ import bootstrap
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
 # DATA_DIR = '../data/MIDAS/'
 # HOURLY_FILE1 = 'midas_2000-2017_precip_pairs.nc'
-# HOURLY_FILE2 = 'era5_1979-1999_precip.zarr'
+HOURLY_FILE = 'era5_1979-2018_precip.zarr'
 
-ANNUAL_FILE = 'era5_1979-2017_precip_annual_max.zarr'
-ANNUAL_FILE_BASENAME = 'era5_1979-2017_ams_{}.zarr'
-ANNUAL_FILE_FITTED = 'era5_1979-2017_precip_fitted.zarr'
+AMS_FILE = 'era5_1979-2018_ams.zarr'
+ANNUAL_FILE_BASENAME = 'era5_1979-2018_ams_{}.zarr'
 # ANNUAL_FILE_GRADIENT = 'era5_2000-2017_precip_gradient.zarr'
 # ANNUAL_FILE_SCALING = 'midas_2000-2017_precip_pairs_scaling.nc'
 
@@ -34,8 +33,8 @@ LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
 # Extract
 # EXTRACT = dict(latitude=slice(1.0, -0.25),
 #                longitude=slice(32.5, 35))
-EXTRACT = dict(latitude=slice(45, 40),
-               longitude=slice(0, 5))
+EXTRACT = dict(latitude=slice(43, 40),
+               longitude=slice(0, 3))
 
 # Event durations in hours - has to be adjusted to temporal resolution for the moving window
 # Selected to be equally spaced on a log scale. Manually adjusted from a call to np.geomspace()
@@ -68,21 +67,32 @@ ANNUAL_ENCODING = {'annual_max': GEN_FLOAT_ENCODING,
 
 
 def step1_annual_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res):
-    """for each rolling winfows size:
+    """for each rolling windows size:
     compute the annual maximum of a moving mean
     return an array with the durations as a new dimension
     """
-    annual_maxs = []
+    da_list = []
     for duration in durations:
         window_size = int(duration / temp_res)
         precip = ds[precip_var]
         precip_roll_mean = precip.rolling(**{time_dim:window_size}, min_periods=max(int(window_size*.9), 1)).mean(dim=time_dim, skipna=True)
-        annual_max = precip_roll_mean.groupby('{}.year'.format(time_dim)).max(dim=time_dim, skipna=True)
-        annual_max.name = 'annual_max'
-        da = annual_max.expand_dims('duration')
-        da.coords['duration'] = [duration]
-        annual_maxs.append(da)
-    return xr.concat(annual_maxs, 'duration')
+        annual_max = precip_roll_mean.groupby('{}.year'.format(time_dim)).max(dim=time_dim, skipna=True).rename('annual_max')
+        da_list.append(annual_max)
+    return xr.concat(da_list, 'duration')
+
+
+def step11_arg_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res):
+    """for each rolling windows size:
+    compute the location of the annual maximum of a moving mean
+    """
+    da_list = []
+    for duration in durations:
+        window_size = int(duration / temp_res)
+        precip = ds[precip_var]
+        precip_roll_mean = precip.rolling(**{time_dim:window_size}, min_periods=max(int(window_size*.9), 1)).mean(dim=time_dim, skipna=True)
+        arg_max = precip_roll_mean.groupby('{}.year'.format(time_dim)).argmax(dim=time_dim, skipna=True).rename('argmax')
+        da_list.append(arg_max)
+    return xr.concat(da_list, 'duration')
 
 
 def step21_pole_trim(ds):
@@ -103,8 +113,8 @@ def step22_rank_ecdf(ds_ams, chunks):
     ds = xr.merge([da_ams, da_ranks]).chunk(chunks)
     # Empirical probability
     # ds['ecdf_weibull'] = ev_fit.ecdf_weibull(ds['rank'], n_obs)
-    # ds['ecdf_hosking'] = ev_fit.ecdf_hosking(ds['rank'], n_obs)
-    ds['ecdf_gringorten'] = ev_fit.ecdf_gringorten(ds['rank'], n_obs)
+    # ds['ecdf_landwehr'] = ev_fit.ecdf_landwehr(ds['rank'], n_obs)
+    ds['ecdf_goda'] = ev_fit.ecdf_goda(ds['rank'], n_obs)
     return ds
 
 
@@ -116,7 +126,7 @@ def step23_fit_ev(ds):
         # (ev_fit.gumbel_pwm, (ds,), 'gumbel'),
         # (ev_fit.gev_pwm, (ds,), 'gev'),
         (ev_fit.frechet_pwm, (ds,), 'frechet'),
-        # (ev_fit.gev_pwm, (ds, -0.114), 'gev-0.114'),
+        (ev_fit.gev_pwm, (ds, -0.114), 'gev-0.114'),
         ]
     ds_list = []
     for fit_func, args, model_name in models:
@@ -146,7 +156,7 @@ def step23_fit_ev(ds):
 
 
 def step24_goodness_of_fit(ds, chunks):
-    ds['KS_D'] = gof.KS_test(ds['ecdf_gringorten'], ds['cdf'])
+    ds['KS_D'] = gof.KS_test(ds['ecdf_goda'], ds['cdf'])
     ds = gof.lilliefors_Dcrit(ds, chunks)
     return ds
 
@@ -243,16 +253,24 @@ def main():
         start_time = datetime.now()
         # Load hourly data #
         # logger(['start computing annual maxima', str(start_time), 0])
-        # hourly_path1 = os.path.join(DATA_DIR, HOURLY_FILE1)
-        # hourly1 = xr.open_dataset(hourly_path1)#.chunk(HOURLY_CHUNKS).loc[EXTRACT]
-        # hourly = xr.open_zarr(hourly_path1)
+        hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
+        hourly = xr.open_zarr(hourly_path)
 
         # Get annual maxima #
         # annual_maxs = step1_annual_maxs_of_roll_mean(hourly1, 'prcp_amt', 'end_time', DURATIONS_ALL, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
-        # ams = step1_annual_maxs_of_roll_mean(hourly2, 'precipitation', 'time', DURATIONS_ALL, TEMP_RES).chunk(ANNUAL_CHUNKS)
+        # ams = step1_annual_maxs_of_roll_mean(hourly, 'precipitation', 'time', DURATIONS_ALL, TEMP_RES).chunk(ANNUAL_CHUNKS).to_dataset()
+        amax_path = os.path.join(DATA_DIR, AMS_FILE)
+        # encoding = {v:GEN_FLOAT_ENCODING for v in ams.data_vars.keys()}
+        # ams.to_zarr(amax_path, mode='w', encoding=encoding)
+
+        # argmax = step11_arg_maxs_of_roll_mean(hourly, 'precipitation', 'time', DURATIONS_ALL, TEMP_RES).chunk(ANNUAL_CHUNKS).to_dataset()
+        # argmax_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('argmax'))
+        # encoding = {v:GEN_FLOAT_ENCODING for v in argmax.data_vars.keys()}
+        # print(argmax.load())
+        # argmax.to_zarr(argmax_path, mode='w', encoding=encoding)
+
+        # ams = xr.open_zarr(amax_path)
         # print(ams)
-        # amax_path1 = os.path.join(DATA_DIR, ANNUAL_FILE)
-        # ams1 = xr.open_zarr(amax_path1)
 
         # reshape to 1 deg
         # ds_trimmed = step21_pole_trim(ams1)
@@ -262,12 +280,12 @@ def main():
 
         # Rank # 
         # ams_path = os.path.join(DATA_DIR, ANNUAL_FILE)
-        # ams = xr.open_zarr(ams_path)
-        # ds_ranked = step22_rank_ecdf(ams, ANNUAL_CHUNKS)
+        ams = xr.open_zarr(amax_path)
+        ds_ranked = step22_rank_ecdf(ams, ANNUAL_CHUNKS)
         # print(ds_ranked)
-        # ranked_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
-        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_ranked.data_vars.keys()}
-        # ds_ranked.to_zarr(ranked_path, mode='w', encoding=encoding)
+        ranked_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
+        encoding = {v:GEN_FLOAT_ENCODING for v in ds_ranked.data_vars.keys()}
+        ds_ranked.to_zarr(ranked_path, mode='w', encoding=encoding)
 
         # fit EV #
         # ds_ranked = xr.open_zarr(ranked_path)#.loc[EXTRACT]
@@ -280,16 +298,16 @@ def main():
         # GoF #
         # ds_fitted = xr.open_zarr(fitted_path)
         # ds_gof = step24_goodness_of_fit(ds_fitted, ANNUAL_CHUNKS)
-        gof_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof'))
+        # gof_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof'))
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_gof.data_vars.keys()}
         # ds_gof.to_zarr(gof_path, mode='w', encoding=encoding)
 
         # confidence interval #
-        ds_gof = xr.open_zarr(gof_path)
-        ds_samples = step31_ci_draw_samples(ds_gof)
-        ci_samples_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ci_samples'))
-        encoding = {v: GEN_FLOAT_ENCODING for v in ds_samples.data_vars.keys()}
-        ds_samples.to_zarr(ci_samples_path, mode='w', encoding=encoding)
+        # ds_gof = xr.open_zarr(gof_path)
+        # ds_samples = step31_ci_draw_samples(ds_gof)
+        # ci_samples_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ci_samples'))
+        # encoding = {v: GEN_FLOAT_ENCODING for v in ds_samples.data_vars.keys()}
+        # ds_samples.to_zarr(ci_samples_path, mode='w', encoding=encoding)
 
 
         # ds_fitted = xr.open_zarr(fitted_path)#.loc[EXTRACT]
