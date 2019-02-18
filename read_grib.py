@@ -23,9 +23,9 @@ VAR_NAME = 'precipitation'
 UNIT = 'm'
 
 YEAR_START = 1979
-YEAR_END = 1999
+YEAR_END = 2018
 
-FILE_CONCAT_PREFIX = 'era5_1979-1999_precip'
+FILE_CONCAT_PREFIX = 'era5_{}-{}_precip'.format(YEAR_START, YEAR_END)
 
 ZARR_CHUNKS = {'time': -1, 'latitude': 16, 'longitude': 16}  # 4: 1deg
 ZARR_ENCODING = {'precipitation': {'dtype': 'float32', 'compressor': zarr.Blosc(cname='lz4', clevel=9)},
@@ -51,12 +51,12 @@ compressors = {'uncompressed': None,
                'lz4': zarr.Blosc(cname='lz4', clevel=9),
                'lz4hc': zarr.Blosc(cname='lz4hc', clevel=9)}
 
-def list_gribs(years):
+def list_files(years, files_dir, extension):
     grib_list = []
     for year in years:
         for month in [str(m).zfill(2) for m in range(1, 13)]:
-            file_name = '{}-{}.grib'.format(year, month)
-            grib_list.append(os.path.join(GRIB_DIR, file_name))
+            file_name = '{}-{}.{}'.format(year, month, extension)
+            grib_list.append(os.path.join(files_dir, file_name))
     return grib_list
 
 
@@ -73,39 +73,6 @@ def sanitise_cube(cube):
     cube.var_name = VAR_NAME
     for coord in cube.coords():
         coord.var_name = coord.name()
-
-
-# def compare_nc_encoding():
-#     filename = '2000-01.grib'
-#     filepath = os.path.join(DATA_DIR, filename)
-#     # load with iris
-#     cube = iris.load_cube(filepath)
-#     sanitise_cube(cube)
-#     # to xarray
-#     chunks = {'time': -1, 'latitude': 'auto', 'longitude': 'auto'}
-#     dc = xr.DataArray.from_iris(cube).chunk(chunks)
-#
-#     # to mm/hr
-#     dc_hr = dc*3600
-#     print(dc_hr)
-#
-#     # save to netcdf
-#     nc_file_int16 = os.path.join(DATA_DIR, 'int16.nc')
-#     nc_file_float32 = os.path.join(DATA_DIR, 'float32.nc')
-#     dc_hr.to_netcdf(nc_file_float32, encoding=encoding_float32)
-#     dc_hr.to_netcdf(nc_file_int16, encoding=encoding_int16)
-#     # read from netcdf
-#     dc_int16 = xr.open_dataset(nc_file_int16, chunks=chunks).precipitation
-#     dc_float32 = xr.open_dataset(nc_file_float32, chunks=chunks).precipitation
-#     # Compute errors
-#     dc_int16_mae = xr.ufuncs.fabs(dc_int16 - dc_hr).mean()
-#     dc_int16_rmse = xr.ufuncs.sqrt(dc_int16 - dc_hr).mean()
-#     dc_float32_mae = xr.ufuncs.fabs(dc_float32 - dc_hr).mean()
-#     dc_float32_rmse = xr.ufuncs.sqrt(dc_float32 - dc_hr).mean()
-#     # Print results
-#     print(dc_int16)
-#     print('<int16> MAE: {}, RMSE: {}'.format(dc_int16_mae.values, dc_int16_rmse.values))
-#     print('<float32> MAE: {}, RMSE: {}'.format(dc_float32_mae.values, dc_float32_rmse.values))
 
 
 def compare_grib():
@@ -183,21 +150,44 @@ def grib2zarr(grib_path, zarr_dir):
     da_hr.to_dataset().to_zarr(out_file_path, mode='w', encoding=ZARR_ENCODING)
 
 
-def gribs2zarr(years):
-    for grib in list_gribs(years):
-        print(grib)
-        grib2zarr(grib, ZARR_DIR)
+def netcdf2zarr(nc_path, zarr_dir, mult):
+    ds = xr.open_dataset(nc_path).chunk(ZARR_CHUNKS)
+    ds_hr = ds * mult
+    ds_hr = ds_hr.rename({'tp': VAR_NAME})
+    basename = os.path.splitext(os.path.basename(nc_path))[0]
+    zarr_filename = '{}.zarr'.format(basename)
+    out_file_path = os.path.join(zarr_dir, zarr_filename)
+    print(out_file_path)
+    print(ds_hr)
+    ds_hr.to_zarr(out_file_path, mode='w', encoding=ZARR_ENCODING)
+
+
+def files2zarr(years, files_dir, extension, multiplier):
+    for f in list_files(years, files_dir, extension):
+        print(f)
+        if extension == 'grib':
+            grib2zarr(f, ZARR_DIR)
+        elif extension == 'netcdf':
+            netcdf2zarr(f, ZARR_DIR, multiplier)
 
 
 def xarray_concat_zarr(zarr_path, years):
     zarr_stores = [f for f in os.listdir(zarr_path) if f.endswith('.zarr')]
-    da_list = [xr.open_zarr(os.path.join(zarr_path, f))
-               for f in zarr_stores if int(f[:4]) in years]
-    da_full = xr.auto_combine(da_list).chunk(ZARR_CHUNKS)
+    da_list = []
+    for f in zarr_stores:
+        if int(f[:4]) in years:
+            da = xr.open_zarr(os.path.join(zarr_path, f))['precipitation']
+            try:
+                da = da.drop('originating_centre')
+            except ValueError:
+                pass
+            da_list.append(da)
+#     print(da_list)
+    da_full = xr.concat(da_list, dim='time').chunk(ZARR_CHUNKS)
     print(da_full)
     out_path = os.path.join(DATA_DIR, '{}.zarr'.format(FILE_CONCAT_PREFIX))
     print(out_path)
-    da_full.to_zarr(out_path, mode='w', encoding=ZARR_ENCODING)
+    da_full.to_dataset().to_zarr(out_path, mode='w', encoding=ZARR_ENCODING)
 
 
 def main():
@@ -207,7 +197,7 @@ def main():
 
 
     with ProgressBar():
-        # gribs2zarr(years)
+        # files2zarr(years, '/home/lunet/gylc4/geodata/ERA5/ensemble', 'netcdf', 10000)
         xarray_concat_zarr(ZARR_DIR, years)
 
 #     grib_path = os.path.join(GRIB_DIR, '1989-11.grib')
