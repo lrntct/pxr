@@ -8,7 +8,7 @@ import math
 import numpy as np
 import xarray as xr
 import dask
-from dask.diagnostics import ProgressBar
+from dask.diagnostics import ProgressBar, Profiler, ResourceProfiler, CacheProfiler
 import zarr
 import scipy.stats
 
@@ -161,11 +161,11 @@ def step24_goodness_of_fit(ds, chunks):
     return ds
 
 
-def step31_ci_draw_samples(ds):
+def step31_ci(ds):
     """Estimate confidence interval using the bootstrap method
     """
     # ds_bootstrap = bootstrap.draw_samples(ds, DTYPE, n_sample=10)
-    ds_bootstrap = bootstrap.ci_gev(ds, DTYPE, n_sample=10, ci_range=0.9)
+    ds_bootstrap = bootstrap.ci_gev(ds, DTYPE, n_sample=2, ci_range=0.9)
     return ds_bootstrap
 
 
@@ -238,28 +238,16 @@ def adhoc_AD(annual_max):
         da_a2.to_dataset().to_netcdf(out_path)
 
 
-def logger(fields):
-    log_file_path = os.path.join(DATA_DIR, LOG_FILENAME)
-    with open(log_file_path, mode='a') as log_file:
-        csv_writer = csv.writer(log_file)
-        csv_writer.writerow(fields)
-
-
 def main():
-    # Log file
-    # logger(['operation', 'timestamp', 'cumul_sec'])
-
-    with ProgressBar():
-        start_time = datetime.now()
+    with ProgressBar(), Profiler() as prof:
         # Load hourly data #
-        # logger(['start computing annual maxima', str(start_time), 0])
-        hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
-        hourly = xr.open_zarr(hourly_path)
+        # hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
+        # hourly = xr.open_zarr(hourly_path)
 
         # Get annual maxima #
         # annual_maxs = step1_annual_maxs_of_roll_mean(hourly1, 'prcp_amt', 'end_time', DURATIONS_ALL, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
         # ams = step1_annual_maxs_of_roll_mean(hourly, 'precipitation', 'time', DURATIONS_ALL, TEMP_RES).chunk(ANNUAL_CHUNKS).to_dataset()
-        amax_path = os.path.join(DATA_DIR, AMS_FILE)
+        # amax_path = os.path.join(DATA_DIR, AMS_FILE)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ams.data_vars.keys()}
         # ams.to_zarr(amax_path, mode='w', encoding=encoding)
 
@@ -279,8 +267,8 @@ def main():
         # print(ds_r)
 
         # Rank # 
-        # ams_path = os.path.join(DATA_DIR, ANNUAL_FILE)
-        ams = xr.open_zarr(amax_path)
+        ams_path = os.path.join(DATA_DIR, AMS_FILE)
+        ams = xr.open_zarr(ams_path)
         ds_ranked = step22_rank_ecdf(ams, ANNUAL_CHUNKS)
         # print(ds_ranked)
         ranked_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
@@ -303,12 +291,11 @@ def main():
         # ds_gof.to_zarr(gof_path, mode='w', encoding=encoding)
 
         # confidence interval #
-        # ds_gof = xr.open_zarr(gof_path)
-        # ds_samples = step31_ci_draw_samples(ds_gof)
+        # ds_ranked = xr.open_zarr(ranked_path)
+        # ds_samples = step31_ci(ds_ranked)
         # ci_samples_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ci_samples'))
         # encoding = {v: GEN_FLOAT_ENCODING for v in ds_samples.data_vars.keys()}
         # ds_samples.to_zarr(ci_samples_path, mode='w', encoding=encoding)
-
 
         # ds_fitted = xr.open_zarr(fitted_path)#.loc[EXTRACT]
         # MAE of parameters
@@ -325,6 +312,10 @@ def main():
         # print(shape_mae)
         # print(ds_mle['shape'].mean())
         # print(ds_pwm['shape'].mean())
+
+        # Profiling results
+        # print(prof.results[0])
+        # prof.visualize()
 
 
 if __name__ == "__main__":
