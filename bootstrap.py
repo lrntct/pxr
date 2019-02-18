@@ -124,21 +124,6 @@ def ci_gev(ds, dtype, n_sample=500, ci_range=0.9, shape=None):
     return ci_range.to_dataset()
 
 
-def parallel_rank(ds):
-    """Assign a rank to the random sample (necesity for ECDF and therefore LMO fitting)
-    """
-    ds['rank'] = xr.apply_ufunc(
-        bottleneck.nanrankdata,
-        ds['annual_max'],
-        input_core_dims=[['year']],
-        output_core_dims=[['year']],
-        # vectorize=True,
-        dask='parallelized',
-        output_dtypes=[dtype]
-        ).rename('rank')
-    return ds
-
-
 def fit_distrib(ds, func, **kwargs):
     n_obs = len(ds['year'])
     # Empirical CDF

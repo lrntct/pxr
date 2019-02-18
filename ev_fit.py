@@ -8,6 +8,7 @@ import xarray as xr
 from scipy.special import gamma
 import scipy.stats
 import numpy as np
+import bottleneck
 
 import helper
 
@@ -24,9 +25,26 @@ def rank_ams(da_ams, dtype):
     """Rank the annual maxs in in ascending order
     """
     # Ranking does not work on dask array
-    asc_rank = da_ams.load().rank(dim='year')
+    # asc_rank = da_ams.load().rank(dim='year')
     # make sure that the resulting array is in the same order as the original
-    ranks = asc_rank.rename('rank').astype(dtype).transpose(*da_ams.dims)
+    # ranks = asc_rank.rename('rank').astype(dtype).transpose(*da_ams.dims)
+    ranks = parallel_rank(da_ams, dtype)
+    return ranks
+
+
+def parallel_rank(da_ams, dtype):
+    """Assign a rank to AMS
+    """
+    ranks = xr.apply_ufunc(
+        bottleneck.nanrankdata,
+        da_ams,
+        kwargs={'axis': -1},
+        input_core_dims=[['year']],
+        output_core_dims=[['year']],
+        # vectorize=True,
+        dask='parallelized',
+        output_dtypes=[dtype]
+        ).rename('rank')
     return ranks
 
 
