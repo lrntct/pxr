@@ -1,6 +1,8 @@
 name: idfpy3
 channels:
+  - pyviz
   - intel
+  - erste-software
   - conda-forge
   - defaults
 dependencies:
@@ -10,7 +12,9 @@ dependencies:
   - asn1crypto=0.24.0=py36_2
   - atomicwrites=1.1.5=py36_0
   - attrs=18.2.0=py_0
+  - automat=0.7.0=py36_0
   - beautifulsoup4=4.6.3=py36_0
+  - bleach=1.5.0=py36_0
   - blosc=1.14.4=hfc679d8_0
   - bokeh=0.13.0=py36_0
   - boost-cpp=1.67.0=h3a22d5f_0
@@ -23,11 +27,13 @@ dependencies:
   - cf-units=2.0.2=py36h3010b51_1000
   - cffi=1.11.5=py36h5e8e0c9_1
   - cftime=1.0.1=py36h7eb728f_0
-  - chardet=3.0.4=py36_3
   - click=6.7=py_1
   - click-plugins=1.0.3=py_1
   - cligj=0.4.0=py_1
   - cloudpickle=0.5.3=py_0
+  - colorcet=1.0.0=py_0
+  - conda=4.5.12=py36_1000
+  - conda-env=2.6.0=1
   - cryptography=2.3.1=py36hdffb7b8_0
   - cryptography-vectors=2.3.1=py36_0
   - curl=7.61.0=h93b3f91_1
@@ -35,9 +41,11 @@ dependencies:
   - cytoolz=0.9.0.1=py36h470a237_0
   - dask=0.18.2=py_0
   - dask-core=0.18.2=py_0
+  - datashape=0.5.4=py36_0
   - dbus=1.13.0=h3a4f0e9_0
   - descartes=1.1.0=py_2
   - distributed=1.22.1=py36_0
+  - docutils=0.14=py36_0
   - eccodes=2.8.2=ha8b302a_0
   - expat=2.2.5=hfc679d8_1
   - fastcache=1.0.2=py36h470a237_1
@@ -73,14 +81,20 @@ dependencies:
   - humanize=0.5.1=py_1
   - icu=58.2=hfc679d8_0
   - idna=2.7=py36_2
+  - imageio=2.4.1=py36_1000
+  - ipykernel=4.10.0=py36_0
   - ipython=6.5.0=py36_0
   - iris=2.2.0=py36_1003
   - isodate=0.6.0=py_1
   - jasper=1.900.1=h07fcdf6_1005
   - jedi=0.12.1=py36_0
   - jinja2=2.10=py_1
+  - jmespath=0.9.3=py36_0
   - jpeg=9c=h470a237_0
   - json-c=0.12.1=h470a237_1
+  - jsonschema=2.6.0=py36_0
+  - jupyter_client=5.2.3=py36_0
+  - jupyter_console=5.2.0=py36_1
   - kealib=1.4.9=h0bee7d0_2
   - kiwisolver=1.0.1=py36h2d50403_2
   - krb5=1.14.6=0
@@ -108,7 +122,6 @@ dependencies:
   - lzo=2.10=0
   - markupsafe=1.0=py36_0
   - matplotlib=2.2.3=py36h8e2386c_0
-  - mkl_fft=1.0.6=py36_0
   - mkl_random=1.0.1=py36_0
   - mock=2.0.0=py36_0
   - monotonic=1.5=py_0
@@ -118,8 +131,12 @@ dependencies:
   - mpmath=1.0.0=py_0
   - msgpack-python=0.5.6=py36h2d50403_2
   - munch=2.3.2=py_0
+  - nbconvert=5.3.1=py36_0
+  - nbformat=4.4.0=py36_0
   - ncurses=6.1=hfc679d8_1
   - netcdf4=1.4.1=py36h62672b6_0
+  - networkx=2.2=py_1
+  - notebook=5.7.0=py36_0
   - numcodecs=0.5.5=py36_0
   - numdifftools=0.9.20=py_0
   - numexpr=2.6.6=py36_0
@@ -131,10 +148,12 @@ dependencies:
   - packaging=17.1=py_0
   - pandas=0.23.4=py36hf8a1672_0
   - pango=1.40.14=he752989_2
+  - param=1.8.2=py_0
   - partd=0.3.8=py_1
   - patsy=0.5.0=py_1
   - pbr=4.2.0=py_0
   - pexpect=4.6.0=py36_0
+  - phantomjs=2.1.1=1
   - pickleshare=0.7.4=py36_0
   - pillow=5.2.0=py36hc736899_1
   - pip=18.0=py36_1
@@ -149,6 +168,7 @@ dependencies:
   - pthread-stubs=0.4=h470a237_1
   - ptyprocess=0.6.0=py36_0
   - py=1.6.0=py_0
+  - pycosat=0.6.3=py36h14c3975_1001
   - pycparser=2.18=py_1
   - pyepsg=0.3.2=py_1
   - pyke=1.1.1=py36_1000
@@ -165,13 +185,20 @@ dependencies:
   - python-dateutil=2.7.3=py_0
   - python-graphviz=0.8.4=py36_2
   - pytz=2018.5=py_0
+  - pywavelets=1.0.1=py36h3010b51_1000
   - pyyaml=3.12=py36_1
   - qt=5.6.2=hf70d934_9
+  - qtconsole=4.3.1=py36_0
   - readline=7.0=haf1bffa_1
+  - regionmask=0.4.0=py_0
   - requests=2.19.1=py36_1
   - requests-ftp=0.3.1=py36_0
   - rtree=0.8.3=py36_0
+  - ruamel_yaml=0.15.71=py36h14c3975_1000
+  - s3transfer=0.1.13=py36_0
+  - scikit-image=0.14.1=py36hfc679d8_4
   - seaborn=0.9.0=py_0
+  - selenium=3.141.0=py36h14c3975_1000
   - setuptools=40.2.0=py36_0
   - shapely=1.6.4=py36h164cb2d_1
   - sip=4.18=py36_1
@@ -183,6 +210,8 @@ dependencies:
   - suds-jurko=0.6=py36_1
   - sympy=1.3=py36_0
   - tblib=1.3.2=py_1
+  - terminado=0.8.1=py36_1
+  - testpath=0.3.1=py36_0
   - tk=8.6.8=0
   - toml=0.10.0=py_0
   - toolz=0.9.0=py_0
@@ -192,6 +221,7 @@ dependencies:
   - urllib3=1.23=py36_1
   - webencodings=0.5.1=py_1
   - wheel=0.31.1=py36_1
+  - widgetsnbextension=3.4.2=py36_0
   - xarray=0.11.2=py36_1000
   - xerces-c=3.2.0=h5d6a6da_2
   - xlrd=1.1.0=py_2
@@ -214,31 +244,21 @@ dependencies:
   - zict=0.1.3=py_0
   - zlib=1.2.11=h470a237_3
   - affine=2.2.1=py36_0
-  - automat=0.7.0=py36_0
   - backcall=0.1.0=py36_0
   - blas=1.0=mkl
-  - bleach=1.5.0=py36_0
   - boto3=1.9.21=py36_0
   - botocore=1.12.23=py36_0
   - constantly=15.1.0=py36h28b3542_0
   - dask-glm=0.1.0=py36_0
   - dask-ml=0.9.0=py36_0
   - decorator=4.3.0=py36_0
-  - docutils=0.14=py36_0
-  - entrypoints=0.2.3=py36_2
   - fribidi=1.0.4=h14c3975_0
   - graphite2=1.3.11=h16798f4_2
   - hyperlink=18.0.0=py36_0
   - incremental=17.5.0=py36_0
   - intel-openmp=2018.0.3=0
-  - ipykernel=4.10.0=py36_0
   - ipython_genutils=0.2.0=py36hb52b0d5_0
   - ipywidgets=7.4.2=py36_0
-  - jmespath=0.9.3=py36_0
-  - jsonschema=2.6.0=py36_0
-  - jupyter=1.0.0=py36_7
-  - jupyter_client=5.2.3=py36_0
-  - jupyter_console=5.2.0=py36_1
   - jupyter_core=4.4.0=py36_0
   - libcurl=7.61.0=h1ad7b7a_0
   - libgcc-ng=8.2.0=hdf63c60_1
@@ -249,9 +269,6 @@ dependencies:
   - mistune=0.8.3=py36h14c3975_1
   - mkl=2018.0.3=1
   - multipledispatch=0.6.0=py36_0
-  - nbconvert=5.3.1=py36_0
-  - nbformat=4.4.0=py36_0
-  - notebook=5.7.0=py36_0
   - numba=0.39.0=py36h04863e7_0
   - numpy=1.15.1=py36h1d66e8a_0
   - numpy-base=1.15.1=py36h81de0dd_0
@@ -266,26 +283,34 @@ dependencies:
   - pycairo=1.15.4=py36h1b9232e_1
   - pygments=2.2.0=py36h0d3125c_0
   - pyzmq=17.1.2=py36h14c3975_0
-  - qtconsole=4.3.1=py36_0
   - rasterio=0.36.0=py36h3f37509_2
-  - s3transfer=0.1.13=py36_0
   - scikit-learn=0.19.1=py36hedc7406_0
   - scipy=1.1.0=py36hc49cb51_0
   - send2trash=1.5.0=py36_0
   - service_identity=17.0.0=py36h28b3542_0
   - simplegeneric=0.8.1=py36_2
   - snuggs=1.4.2=py36_0
-  - terminado=0.8.1=py36_1
-  - testpath=0.3.1=py36_0
   - traitlets=4.3.2=py36h674d592_0
   - twisted=18.7.0=py36h14c3975_1
   - util-linux=2.21=0
   - wcwidth=0.1.7=py36hdf4376a_0
-  - widgetsnbextension=3.4.2=py36_0
   - zeromq=4.2.5=hf484d3e_1
   - zope=1.0=py36_1
   - zope.interface=4.5.0=py36h14c3975_0
+  - chardet=3.0.4=py36_3
+  - entrypoints=0.2.3=py36_2
   - icc_rt=2019.1=intel_144
+  - intelpython=2019.1=0
+  - jupyter=1.0.0=py36_7
+  - mkl_fft=1.0.6=py36_0
+  - datashader=0.6.9=py_0
+  - geoviews=1.5.3=py_0
+  - geoviews-core=1.5.3=py_0
+  - holoviews=1.10.9=py_0
+  - hvplot=0.2.1=py_0
+  - pyct=0.4.6=py_0
+  - pyct-core=0.4.6=py_0
+  - pyviz_comms=0.7.0=py_0
   - pip:
     - beautifultable==0.5.3
     - cdsapi==0.1.1
@@ -304,5 +329,5 @@ dependencies:
     - virtualenv==15.2.0
     - virtualenv-clone==0.3.0
     - zstandard==0.9.1
-prefix: /home/laurent/miniconda3/envs/idfpy3
+prefix: /home/lunet/gylc4/miniconda2/envs/idfpy3
 

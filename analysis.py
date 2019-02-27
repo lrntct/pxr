@@ -9,13 +9,17 @@ import numpy as np
 import xarray as xr
 import dask
 from dask.diagnostics import ProgressBar, Profiler, ResourceProfiler, CacheProfiler
+from dask.distributed import Client, LocalCluster
 import zarr
 import scipy.stats
+
+from bokeh.io import export_png
 
 import ev_fit
 import gof
 import helper
 import bootstrap
+import ufuncs
 
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
@@ -33,8 +37,8 @@ LOG_FILENAME = 'Analysis_log_{}.csv'.format(str(datetime.now()))
 # Extract
 # EXTRACT = dict(latitude=slice(1.0, -0.25),
 #                longitude=slice(32.5, 35))
-EXTRACT = dict(latitude=slice(43, 40),
-               longitude=slice(0, 3))
+EXTRACT = dict(latitude=slice(90, 45),
+               longitude=slice(0, 45))
 
 # Event durations in hours - has to be adjusted to temporal resolution for the moving window
 # Selected to be equally spaced on a log scale. Manually adjusted from a call to np.geomspace()
@@ -56,8 +60,9 @@ DTYPE = 'float32'
 HOURLY_CHUNKS = {'time': -1, 'latitude': 16, 'longitude': 16}
 # 4 cells: 1 degree
 ANNUAL_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 30*4, 'longitude': 30*4}
+# When resolution is 1 degree
 ANNUAL_CHUNKS_1DEG = {'year': -1, 'duration': -1, 'latitude': 30, 'longitude': 30}
-EXTRACT_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 4, 'longitude': 4}
+EXTRACT_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 30, 'longitude': 30}
 GAUGES_CHUNKS = {'year': -1, 'duration':-1, 'station': 200}
 GEN_FLOAT_ENCODING = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
 ANNUAL_ENCODING = {'annual_max': GEN_FLOAT_ENCODING,
@@ -78,7 +83,7 @@ def step1_annual_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res
         precip_roll_mean = precip.rolling(**{time_dim:window_size}, min_periods=max(int(window_size*.9), 1)).mean(dim=time_dim, skipna=True)
         annual_max = precip_roll_mean.groupby('{}.year'.format(time_dim)).max(dim=time_dim, skipna=True).rename('annual_max')
         da_list.append(annual_max)
-    return xr.concat(da_list, 'duration')
+    return xr.concat(da_list, 'duration').to_dataset().assign_coords(duration=durations)
 
 
 def step11_arg_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res):
@@ -115,10 +120,11 @@ def step22_rank_ecdf(ds_ams, chunks):
     # ds['ecdf_weibull'] = ev_fit.ecdf_weibull(ds['rank'], n_obs)
     # ds['ecdf_landwehr'] = ev_fit.ecdf_landwehr(ds['rank'], n_obs)
     ds['ecdf_goda'] = ev_fit.ecdf_goda(ds['rank'], n_obs)
+    print(ds)
     return ds
 
 
-def step23_fit_ev(ds):
+def step23_fit_evs(ds):
     """Fit EV using various techniques.
     Keep them along a new dimension
     """
@@ -161,19 +167,13 @@ def step24_goodness_of_fit(ds, chunks):
     return ds
 
 
-def step31_ci(ds):
+def step31_ci(ds, ev_shape=0.114, n_sample=1000):
     """Estimate confidence interval using the bootstrap method
     """
-    # ds_bootstrap = bootstrap.draw_samples(ds, DTYPE, n_sample=10)
-    ds_bootstrap = bootstrap.ci_gev(ds, DTYPE, n_sample=2, ci_range=0.9)
+    ds_bootstrap = bootstrap.ci_gev(ds, DTYPE, n_sample=n_sample, ci_range=0.9, shape=ev_shape)
     return ds_bootstrap
-
-
-# def step31_ci_draw_samples(ds):
-#     """Estimate confidence interval using the bootstrap method
-#     """
-#     ds_bootstrap = bootstrap.draw_samples(ds, DTYPE, n=10)
-#     return ds_bootstrap
+    # ds = bootstrap.ci_gev_direct(ds, n_sample=n_sample, ci_range=0.9, ev_shape=ev_shape, dtype=DTYPE)
+    return ds
 
 
 def step3_scaling(ds):
@@ -211,42 +211,21 @@ def step3_scaling(ds):
         ds_fit.coords['scaling_extent'] = [dur_name]
         ds_list.append(ds_fit)
     ds_fit = xr.concat(ds_list, dim='scaling_extent')
-    # Add thos DataArray to the general Dataset
+    # Add those DataArray to the general Dataset
     ds = xr.merge([ds, ds_fit])
     return ds
 
 
-def adhoc_AD(annual_max):
-    """Calculate Anderson-Darling statistic for each duration.
-    Save a separate file for each duration
-    """
-    # for duration in annual_max['duration']:
-    for duration in [24]:
-        # duration_value = duration.values
-        duration_value = duration
-        print(duration_value)
-        da_sel = annual_max.sel(duration=duration)
-        da_a2 = xr.apply_ufunc(anderson_gumbel,
-                               da_sel.load(),
-                               input_core_dims=[['year']],
-                               vectorize=True,
-                            #    dask='parallelized',
-                               output_dtypes=[DTYPE]
-                               ).rename('A2')
-        out_name = 'era5_1979-2017_precip_a2_{}.nc'.format(duration_value)
-        out_path = os.path.join(DATA_DIR, out_name)
-        da_a2.to_dataset().to_netcdf(out_path)
-
-
 def main():
-    with ProgressBar(), Profiler() as prof:
+    # with ProgressBar(), Profiler() as prof:
+    with ProgressBar():
         # Load hourly data #
         # hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
         # hourly = xr.open_zarr(hourly_path)
 
         # Get annual maxima #
         # annual_maxs = step1_annual_maxs_of_roll_mean(hourly1, 'prcp_amt', 'end_time', DURATIONS_ALL, TEMP_RES)#.chunk(ANNUAL_CHUNKS)
-        # ams = step1_annual_maxs_of_roll_mean(hourly, 'precipitation', 'time', DURATIONS_ALL, TEMP_RES).chunk(ANNUAL_CHUNKS).to_dataset()
+        # ams = step1_annual_maxs_of_roll_mean(hourly, 'precipitation', 'time', DURATIONS_ALL, TEMP_RES).chunk(ANNUAL_CHUNKS)
         # amax_path = os.path.join(DATA_DIR, AMS_FILE)
         # encoding = {v:GEN_FLOAT_ENCODING for v in ams.data_vars.keys()}
         # ams.to_zarr(amax_path, mode='w', encoding=encoding)
@@ -257,26 +236,30 @@ def main():
         # print(argmax.load())
         # argmax.to_zarr(argmax_path, mode='w', encoding=encoding)
 
+        # amax_path = os.path.join(DATA_DIR, AMS_FILE)
         # ams = xr.open_zarr(amax_path)
         # print(ams)
 
         # reshape to 1 deg
-        # ds_trimmed = step21_pole_trim(ams1)
         # print(ds_trimmed)
         # ds_r = helper.da_pool(ds_trimmed['annual_max'], .25, 1).to_dataset().chunk(ANNUAL_CHUNKS_1DEG)
         # print(ds_r)
 
+        # ams_path = os.path.join(DATA_DIR, AMS_FILE)
+        # ams = xr.open_zarr(ams_path)
+        # ds_trimmed = step21_pole_trim(ams1)
+
+
         # Rank # 
-        ams_path = os.path.join(DATA_DIR, AMS_FILE)
-        ams = xr.open_zarr(ams_path)
-        ds_ranked = step22_rank_ecdf(ams, ANNUAL_CHUNKS)
+        # ds_ranked = step22_rank_ecdf(ams, ANNUAL_CHUNKS)
         # print(ds_ranked)
         ranked_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
-        encoding = {v:GEN_FLOAT_ENCODING for v in ds_ranked.data_vars.keys()}
-        ds_ranked.to_zarr(ranked_path, mode='w', encoding=encoding)
+        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_ranked.data_vars.keys()}
+        # ds_ranked.to_zarr(ranked_path, mode='w', encoding=encoding)
 
         # fit EV #
         # ds_ranked = xr.open_zarr(ranked_path)#.loc[EXTRACT]
+        # print(ds_ranked.load())
         # ds_fitted = step23_fit_ev(ds_ranked)
         # fitted_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('fitted'))
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
@@ -291,11 +274,17 @@ def main():
         # ds_gof.to_zarr(gof_path, mode='w', encoding=encoding)
 
         # confidence interval #
-        # ds_ranked = xr.open_zarr(ranked_path)
-        # ds_samples = step31_ci(ds_ranked)
-        # ci_samples_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ci_samples'))
-        # encoding = {v: GEN_FLOAT_ENCODING for v in ds_samples.data_vars.keys()}
-        # ds_samples.to_zarr(ci_samples_path, mode='w', encoding=encoding)
+        # ds_ranked = xr.open_zarr(ranked_path).loc[EXTRACT].chunk(EXTRACT_CHUNKS)
+        # ds_ranked = step21_pole_trim(ds_ranked)
+        # print(ds_ranked)
+        # ds_ci = step31_ci(ds_ranked, n_sample=1000)
+        ci_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ci_extract'))
+        # encoding = {v: GEN_FLOAT_ENCODING for v in ds_ci.data_vars.keys()}
+        # print(ds_ci)
+        # ds_ci.to_zarr(ci_path, mode='w', encoding=encoding)
+        ds_ci = xr.open_zarr(ci_path)
+        ci_sel = ds_ci.sel(longitude=40, latitude=50, duration=24, ev_param='location')
+        print(ci_sel.load())
 
         # ds_fitted = xr.open_zarr(fitted_path)#.loc[EXTRACT]
         # MAE of parameters
@@ -315,8 +304,16 @@ def main():
 
         # Profiling results
         # print(prof.results[0])
-        # prof.visualize()
+        # viz = prof.visualize()
+        # print(viz)
+        # print(type(viz))
+        # export_png(viz, filename='profile.png')
 
 
 if __name__ == "__main__":
+    # Use dask distributed LocalCluster (uses processes instead of threads)
+    # cluster = LocalCluster(n_workers=16, threads_per_worker=2)
+    # cluster = LocalCluster()
+    # print(cluster)
+    # client = Client(cluster)
     sys.exit(main())

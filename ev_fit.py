@@ -24,17 +24,6 @@ EM = 0.577215664901532860606512090082
 def rank_ams(da_ams, dtype):
     """Rank the annual maxs in in ascending order
     """
-    # Ranking does not work on dask array
-    # asc_rank = da_ams.load().rank(dim='year')
-    # make sure that the resulting array is in the same order as the original
-    # ranks = asc_rank.rename('rank').astype(dtype).transpose(*da_ams.dims)
-    ranks = parallel_rank(da_ams, dtype)
-    return ranks
-
-
-def parallel_rank(da_ams, dtype):
-    """Assign a rank to AMS
-    """
     ranks = xr.apply_ufunc(
         bottleneck.nanrankdata,
         da_ams,
@@ -45,7 +34,8 @@ def parallel_rank(da_ams, dtype):
         dask='parallelized',
         output_dtypes=[dtype]
         ).rename('rank')
-    return ranks
+    # Maintain order of dimensions
+    return ranks.transpose(*da_ams.dims)
 
 
 def plotting_position(rank, n_obs, a, b):
@@ -309,14 +299,18 @@ def gev_gufunc(ams, ecdf, n_obs, ax_year, shape=None):
     l1 = b0
     l2 = 2 * b1 - b0
     if shape:
-        arr_shape = np.full_like(b0, shape)
+        try:
+            arr_shape = xr.full_like(b0, shape)
+        except TypeError:
+            arr_shape = np.full_like(b0, shape)
     else:
         b2 = gen_bvalue(ecdf, ams, n_obs, 2, ax_year)
         arr_shape = gev_shape(b0, b1, b2)
-    arr_scale = np.where(arr_shape == 0,
+
+    arr_scale = xr.where(arr_shape == 0,
                          gumbel_scale(l2),
                          gev_scale(l2, arr_shape))
-    arr_loc = np.where(arr_shape == 0,
+    arr_loc = xr.where(arr_shape == 0,
                        gumbel_loc(l1, arr_scale),
                        gev_loc(l1, arr_scale, arr_shape))
     return arr_loc, arr_scale, arr_shape
@@ -334,10 +328,14 @@ def gev_pwm(ds, shape=None):
     """
     n_obs = len(ds['year'])
     ams = ds['annual_max']
-    ax_year = ams.get_index('year')
+    ax_year = ams.get_axis_num('year')
     ecdf = ds['ecdf_goda']
-    da_loc, da_scale, da_shape = gev_gufunc(ams, ecdf, n_obs, ax_year, shape=shape)
-    return da_loc.rename('location'), da_scale.rename('scale'), da_shape.rename('shape')
+    ev_params = gev_gufunc(ams, ecdf, n_obs, ax_year, shape=shape)
+    da_list = []
+    for arr, name in zip(ev_params, ['location', 'scale', 'shape']):
+        da_list.append(xr.DataArray(arr, name=name))
+    # print(da_list[0])
+    return tuple(da_list)
 
 
 def gev_cdf_nonzero(x, loc, scale, shape):
@@ -356,9 +354,13 @@ def gev_cdf(x, loc, scale, shape):
 def gen_bvalue(ecdf, ams, n_obs, order, axis):
     """Estimation of bvalue not depending on xarray
     """
-    arr_sum = ams.sum(axis=axis, keepdims=True)
+    arr_sum = ams.sum(axis=axis)
+    arr_sum = np.expand_dims(arr_sum, axis)
     pr_sum = (ecdf**order) * arr_sum
-    return pr_sum / n_obs
+    bvalue = pr_sum / n_obs
+    # arr_sum = ams.sum(axis=axis, keepdims=True)
+    # pr_sum = (ecdf**order) * arr_sum
+    return bvalue
 
 
 def b_value(ds, order):
@@ -370,9 +372,7 @@ def b_value(ds, order):
     https://doi.org/10.1080/00401706.1985.10488049
     """
     n_obs = ds['year'].count()
-    axis = ds['annual_max'].get_index('year')
-    # Hosking (1990) calls for a specific plotting position
-    # Here we use the more common Gringorten, for consistency
+    axis = ds['annual_max'].get_axis_num('year')
     return gen_bvalue(ecdf=ds['ecdf_goda'],
                       ams=ds['annual_max'],
                       n_obs=n_obs,
