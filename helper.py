@@ -5,8 +5,14 @@ import math
 import xarray as xr
 import numpy as np
 import numba as nb
+import bottleneck
+import numbagg
 import statsmodels.api as sm
 
+
+@nb.vectorize(["float32(float32)", "float64(float64)"])
+def log(x):
+    return math.log(x)
 
 
 @nb.vectorize(["float32(float32)", "float64(float64)"])
@@ -14,61 +20,30 @@ def gamma(x):
     return math.gamma(x)
 
 
-def linregress(func, x, y, dims):
-    """x, y: dataArray to use for the regression
-    dims: dimension on which to carry out the regression
+# @nb.njit()
+def OLS_jit(x, y, axis=-1):
+    """linear regression using the Ordinary Least Squares.
     """
-    # return a tuple of DataArrays
-    res = xr.apply_ufunc(func, x, y,
-            input_core_dims=[dims, dims],
-            output_core_dims=[[] for i in LR_RES],
-            vectorize=True,
-            dask='allowed',
-            output_dtypes=[DTYPE for i in LR_RES]
-            )
-    return res
-
-
-def nanlinregress(x, y):
-    """wrapper around statsmodels OLS to make it behave like scipy linregress.
-    Make use of its capacity to ignore NaN.
-    """
-    X = sm.add_constant(x)
-    try:
-        results = sm.OLS(y, X, missing='drop').fit()
-    except ValueError:
-        slope = np.nan
-        intercept = np.nan
-        rvalue = np.nan
-        pvalue = np.nan
-        stderr = np.nan
-    else:
-        slope = results.params[1]
-        intercept = results.params[0]
-        rvalue = results.rsquared ** .5
-        pvalue = results.pvalues[1]
-        stderr = results.bse[1]
-
-    return slope, intercept, rvalue, pvalue, stderr
-
-
-def OLS(da_x, da_y, dim):
-    """Linear regression along the dimension dim.
-    Use Ordinary Least Squares.
-    """
-    mean_x = da_x.mean(dim=dim)
-    mean_y = da_y.mean(dim=dim)
-    x_diff = da_x - mean_x
-    slope = ((x_diff * (da_y - mean_y)).sum(dim=dim) /
-             (x_diff**2).sum(dim=dim)).rename('line_slope')
-    intercept = (mean_y - slope * mean_x).rename('line_intercept')
-
+    assert x.shape[axis] == y.shape[axis]
+    mean_x = np.mean(x, axis=axis, keepdims=True)
+    mean_y = np.mean(y, axis=axis, keepdims=True)
+    slope = (np.sum((x - mean_x) * (y - mean_y), axis=axis, keepdims=True) /
+             np.sum((x - mean_x) * (x - mean_x), axis=axis, keepdims=True))
+    intercept = mean_y - slope * mean_x
     # coefficient of determination
-    fitted = slope * da_x + intercept
-    rsquared = ((np.square(fitted - mean_y).sum(dim=dim)) /
-        (np.square(da_y - mean_y).sum(dim=dim))).rename('rsquared')
+    fitted = slope * x + intercept
+    rsquared = (np.sum(np.square(fitted - mean_y), axis=axis, keepdims=True) /
+                np.sum(np.square(y - mean_y), axis=axis, keepdims=True))
+    params = np.array([slope, intercept, rsquared])
+    return np.squeeze(params, axis=-1)
 
-    return slope, intercept, rsquared
+
+def get_sampling_idx(n_sample, n_obs):
+    sampling_idx = np.random.randint(n_obs, size=(n_sample, n_obs), dtype='uint16')
+    # Add the original order as the last sample
+    idx_orig = np.arange(n_obs, dtype='uint16')
+    idx_orig = np.expand_dims(idx_orig, axis=0)
+    return np.concatenate([sampling_idx, idx_orig])
 
 
 def da_pool(da, old_res, new_res):

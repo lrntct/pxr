@@ -17,8 +17,8 @@ from bokeh.io import export_png
 
 import ev_fit
 import gof
+import scaling
 import helper
-import bootstrap
 
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
@@ -129,48 +129,11 @@ def step22_rank_ecdf(ds_ams, chunks):
     return ds
 
 
-# def step23_fit_evs(ds):
-#     """Fit EV using various techniques.
-#     Keep them along a new dimension
-#     """
-#     models = [
-#         # (ev_fit.gumbel_pwm, (ds,), 'gumbel'),
-#         # (ev_fit.gev_pwm, (ds,), 'gev'),
-#         (ev_fit.frechet_pwm, (ds,), 'frechet'),
-#         (ev_fit.gev_pwm, (ds, -0.114), 'gev-0.114'),
-#         ]
-#     ds_list = []
-#     for fit_func, args, model_name in models:
-#         # Put the parameters in a new dimension
-#         param_list = []
-#         for da_param in fit_func(*args):
-#             da_param = da_param.expand_dims('ev_param')
-#             da_param.coords['ev_param'] = [da_param.name]
-#             param_list.append(da_param.rename('ev_parameter'))
-#         da_params = xr.concat(param_list, dim='ev_param')
-#         # Compute the corresponding CDF
-#         da_cdf = ev_fit.gev_cdf(ds['annual_max'],
-#                                 da_params.sel(ev_param='location'),
-#                                 da_params.sel(ev_param='scale'),
-#                                 da_params.sel(ev_param='shape'),
-#                                 ).rename('cdf')
-#         # Test whether shape is zero
-#         da_z = ev_fit.z_test(da_params.sel(ev_param='shape'),
-#                              ds['year'].count()).rename('Z_stat')
-#         ds_fit = xr.merge([da_params, da_cdf, da_z])
-#         ds_fit = ds_fit.expand_dims('ev_fit')
-#         ds_fit.coords['ev_fit'] = [model_name]
-#         ds_list.append(ds_fit)
-#     ds_fit = xr.concat(ds_list, dim='ev_fit')
-#     ds = xr.merge([ds, ds_fit])
-#     return ds
-
-
 def step23_fit_gev_with_ci(ds):
     """Estimate GEV parameters and their confidence intervals.
     CI are estimated with the bootstrap method.
     """
-    ds['gev_parameters'] = ev_fit.ci_gev(ds, DTYPE, n_sample=1000, ci_range=0.9, shape=-0.114)
+    ds['gev_parameters'] = ev_fit.fit_gev(ds, DTYPE, n_sample=1000, shape=-0.114)
     return ds
 
 
@@ -184,6 +147,14 @@ def step24_goodness_of_fit(ds, chunks):
     ds['cdf'] = ev_fit.gev_cdf(ds['annual_max'], loc, scale, shape)
     ds['KS_D'] = gof.KS_test(ds['ecdf_goda'], ds['cdf'])
     ds = gof.lilliefors_Dcrit(ds, chunks)
+    return ds
+
+
+def step3_scaling_with_ci(ds):
+    """Estimate linear regression and their confidence intervals.
+    CI are estimated with the bootstrap method.
+    """
+    ds['gev_scaling'] = scaling.scaling_gev(ds, DTYPE, n_sample=1000, shape=-0.114)
     return ds
 
 
@@ -228,7 +199,6 @@ def step3_scaling(ds):
 
 
 def main():
-    # with ProgressBar(), Profiler() as prof:
     with ProgressBar():
         # Load hourly data #
         # hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
@@ -278,25 +248,26 @@ def main():
         # print(ds_fitted)
 
         # GoF #
-        ds_fitted = xr.open_zarr(fitted_path)
-        ds_gof = step24_goodness_of_fit(ds_fitted, ANNUAL_CHUNKS)
+        # ds_fitted = xr.open_zarr(fitted_path)
+        # ds_gof = step24_goodness_of_fit(ds_fitted, ANNUAL_CHUNKS)
         gof_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof'))
-        encoding = {v:GEN_FLOAT_ENCODING for v in ds_gof.data_vars.keys()}
-        print(ds_gof)
-        ds_gof.to_zarr(gof_path, mode='w', encoding=encoding)
+        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_gof.data_vars.keys()}
+        # print(ds_gof)
+        # ds_gof.to_zarr(gof_path, mode='w', encoding=encoding)
 
-        # Profiling results
-        # print(prof.results[0])
-        # viz = prof.visualize()
-        # print(viz)
-        # print(type(viz))
-        # export_png(viz, filename='profile.png')
+        # Scaling #
+        ds_gof = xr.open_zarr(gof_path)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
+        # print(ds_gof)
+        ds_scaling = step3_scaling_with_ci(ds_gof)
+        scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('scaling'))
+        encoding = {v:GEN_FLOAT_ENCODING for v in ds_scaling.data_vars.keys()}
+        print(ds_scaling)
+        ds_scaling.to_zarr(scaling_path, mode='w', encoding=encoding)
 
 
 if __name__ == "__main__":
     # Use dask distributed LocalCluster (uses processes instead of threads)
-    # cluster = LocalCluster(n_workers=16, threads_per_worker=2)
-    # cluster = LocalCluster()
-    # print(cluster)
-    # client = Client(cluster)
+    cluster = LocalCluster()
+    print(cluster)
+    client = Client(cluster)
     sys.exit(main())

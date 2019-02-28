@@ -205,48 +205,51 @@ def gev_pwm(ams, ecdf, n_obs, ax_year, shape=None):
     return arr_loc, arr_scale, arr_shape
 
 
-def ci_gev_func(arr_ams, sampling_idx, n_obs, ci_range, shape_param):
-    """Estimate the confidence interval of GEV parameters using the bootstrap method.
-    arr_ams is one-dimensional
-    The last row of sample idx is the original order, for the actual parameters estimates
+def gev_from_samples(arr_ams, ax_year, sampling_idx, n_obs, shape_param):
+    """draw sample with replacement and find GEV parameters using the
+    Probability-Weighted Moments method.
     """
     # Draw samples. Add dimension n_sample in first position
     arr_samples = arr_ams[sampling_idx]
-    ax_year = 1
+    ax_year += 1
     # rank samples
     rank = bottleneck.nanrankdata(arr_samples, axis=ax_year).astype(fscalar)
     # fit distribution. ev_apams is a tuple of ndarrays
     ecdf = ecdf_goda(rank, n_obs)
-    ev_params = gev_pwm(arr_samples, ecdf, n_obs,
-                                  ax_year, shape=shape_param)
+    ev_params = gev_pwm(arr_samples, ecdf, n_obs, ax_year, shape=shape_param)
     # Add one axis. Changes shape to (ev_params, samples)
-    ev_params = np.array(ev_params)
-    # Get the parameters from the original sample order (last)
+    return np.array(ev_params)
+
+
+def gev_func(arr_ams, ax_year, sampling_idx, n_obs, ci_range, shape_param):
+    """Estimate the GEV parameters and their confidence interval using the bootstrap method.
+    The last row of sample idx is the original order, for the actual parameters estimates.
+    arr_ams is one-dimensional
+    """
+    # Find GEV parameters
+    ev_params = gev_from_samples(arr_ams, ax_year, sampling_idx, n_obs, shape_param)
+    # Get the parameters from the original sample order (last sample)
     orig_params = np.expand_dims(ev_params[:, -1], axis=0)
     # get confidence interval. Changes shape to (quantiles, ev_params)
     c_low = (1 - ci_range) / 2
     c_high = 1 - c_low
     quantiles = np.nanquantile(ev_params[:, :-1], [c_low, c_high], axis=1)
-    # print('quantiles', quantiles.shape)
     # Group parameters from the original sample and their confidence interval
     return np.concatenate([orig_params, quantiles])
 
 
-def ci_gev(ds, dtype, n_sample=500, ci_range=0.9, shape=None):
-    """
+def fit_gev(ds, dtype, n_sample=500, ci_range=0.9, shape=None):
+    """Fit the GEV
     """
     # Random sampling of indices, shared across all cells
     n_obs = len(ds['year'])
-    sampling_idx = np.random.randint(n_obs, size=(n_sample, n_obs), dtype='uint16')
-    # Add the original order as the last sample
-    idx_orig = np.arange(n_obs, dtype='uint16')
-    idx_orig = np.expand_dims(idx_orig, axis=0)
-    sampling_idx = np.concatenate([sampling_idx, idx_orig])
+    sampling_idx = helper.get_sampling_idx(n_sample, n_obs)
     # Estimate parameters and CI
     da_ci = xr.apply_ufunc(
-        ci_gev_func,
+        gev_func,
         ds['annual_max'],
         kwargs={'sampling_idx': sampling_idx,
+                'ax_year': 0,
                 'n_obs': n_obs,
                 'ci_range': ci_range,
                 'shape_param': shape},
