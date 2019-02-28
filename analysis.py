@@ -19,7 +19,6 @@ import ev_fit
 import gof
 import helper
 import bootstrap
-import ufuncs
 
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
@@ -111,68 +110,80 @@ def step21_pole_trim(ds):
 def step22_rank_ecdf(ds_ams, chunks):
     """Compute the rank of AMS and the empirical probability
     """
-    n_obs = ds_ams['year'].count()
+    n_obs = ds_ams['year'].count().item()
     da_ams = ds_ams['annual_max']
-    da_ranks = ev_fit.rank_ams(da_ams, DTYPE)
+    da_ranks = ev_fit.rank_ams(da_ams)
     # Merge arrays in a single dataset, set the dask chunks
     ds = xr.merge([da_ams, da_ranks]).chunk(chunks)
     # Empirical probability
-    # ds['ecdf_weibull'] = ev_fit.ecdf_weibull(ds['rank'], n_obs)
-    # ds['ecdf_landwehr'] = ev_fit.ecdf_landwehr(ds['rank'], n_obs)
-    ds['ecdf_goda'] = ev_fit.ecdf_goda(ds['rank'], n_obs)
-    print(ds)
+    ds['ecdf_goda'] = xr.apply_ufunc(
+        ev_fit.ecdf_goda,
+        da_ranks,
+        kwargs={'n_obs': n_obs},
+        input_core_dims=[['year']],
+        output_core_dims=[['year']],
+        vectorize=True,
+        dask='parallelized',
+        output_dtypes=[DTYPE]
+        ).transpose(*da_ams.dims)
     return ds
 
 
-def step23_fit_evs(ds):
-    """Fit EV using various techniques.
-    Keep them along a new dimension
+# def step23_fit_evs(ds):
+#     """Fit EV using various techniques.
+#     Keep them along a new dimension
+#     """
+#     models = [
+#         # (ev_fit.gumbel_pwm, (ds,), 'gumbel'),
+#         # (ev_fit.gev_pwm, (ds,), 'gev'),
+#         (ev_fit.frechet_pwm, (ds,), 'frechet'),
+#         (ev_fit.gev_pwm, (ds, -0.114), 'gev-0.114'),
+#         ]
+#     ds_list = []
+#     for fit_func, args, model_name in models:
+#         # Put the parameters in a new dimension
+#         param_list = []
+#         for da_param in fit_func(*args):
+#             da_param = da_param.expand_dims('ev_param')
+#             da_param.coords['ev_param'] = [da_param.name]
+#             param_list.append(da_param.rename('ev_parameter'))
+#         da_params = xr.concat(param_list, dim='ev_param')
+#         # Compute the corresponding CDF
+#         da_cdf = ev_fit.gev_cdf(ds['annual_max'],
+#                                 da_params.sel(ev_param='location'),
+#                                 da_params.sel(ev_param='scale'),
+#                                 da_params.sel(ev_param='shape'),
+#                                 ).rename('cdf')
+#         # Test whether shape is zero
+#         da_z = ev_fit.z_test(da_params.sel(ev_param='shape'),
+#                              ds['year'].count()).rename('Z_stat')
+#         ds_fit = xr.merge([da_params, da_cdf, da_z])
+#         ds_fit = ds_fit.expand_dims('ev_fit')
+#         ds_fit.coords['ev_fit'] = [model_name]
+#         ds_list.append(ds_fit)
+#     ds_fit = xr.concat(ds_list, dim='ev_fit')
+#     ds = xr.merge([ds, ds_fit])
+#     return ds
+
+
+def step23_fit_gev_with_ci(ds):
+    """Estimate GEV parameters and their confidence intervals.
+    CI are estimated with the bootstrap method.
     """
-    models = [
-        # (ev_fit.gumbel_pwm, (ds,), 'gumbel'),
-        # (ev_fit.gev_pwm, (ds,), 'gev'),
-        (ev_fit.frechet_pwm, (ds,), 'frechet'),
-        (ev_fit.gev_pwm, (ds, -0.114), 'gev-0.114'),
-        ]
-    ds_list = []
-    for fit_func, args, model_name in models:
-        # Put the parameters in a new dimension
-        param_list = []
-        for da_param in fit_func(*args):
-            da_param = da_param.expand_dims('ev_param')
-            da_param.coords['ev_param'] = [da_param.name]
-            param_list.append(da_param.rename('ev_parameter'))
-        da_params = xr.concat(param_list, dim='ev_param')
-        # Compute the corresponding CDF
-        da_cdf = ev_fit.gev_cdf(ds['annual_max'],
-                                da_params.sel(ev_param='location'),
-                                da_params.sel(ev_param='scale'),
-                                da_params.sel(ev_param='shape'),
-                                ).rename('cdf')
-        # Test whether shape is zero
-        da_z = ev_fit.z_test(da_params.sel(ev_param='shape'),
-                             ds['year'].count()).rename('Z_stat')
-        ds_fit = xr.merge([da_params, da_cdf, da_z])
-        ds_fit = ds_fit.expand_dims('ev_fit')
-        ds_fit.coords['ev_fit'] = [model_name]
-        ds_list.append(ds_fit)
-    ds_fit = xr.concat(ds_list, dim='ev_fit')
-    ds = xr.merge([ds, ds_fit])
+    ds['gev_parameters'] = ev_fit.ci_gev(ds, DTYPE, n_sample=1000, ci_range=0.9, shape=-0.114)
     return ds
 
 
 def step24_goodness_of_fit(ds, chunks):
+    """Goodness of fit with the Lilliefors test.
+    """
+    # Compute the CDF
+    loc = ds['gev_parameters'].sel(ci='value', ev_param='location')
+    scale = ds['gev_parameters'].sel(ci='value', ev_param='scale')
+    shape = ds['gev_parameters'].sel(ci='value', ev_param='shape')
+    ds['cdf'] = ev_fit.gev_cdf(ds['annual_max'], loc, scale, shape)
     ds['KS_D'] = gof.KS_test(ds['ecdf_goda'], ds['cdf'])
     ds = gof.lilliefors_Dcrit(ds, chunks)
-    return ds
-
-
-def step31_ci(ds, ev_shape=0.114, n_sample=1000):
-    """Estimate confidence interval using the bootstrap method
-    """
-    ds_bootstrap = bootstrap.ci_gev(ds, DTYPE, n_sample=n_sample, ci_range=0.9, shape=ev_shape)
-    return ds_bootstrap
-    # ds = bootstrap.ci_gev_direct(ds, n_sample=n_sample, ci_range=0.9, ev_shape=ev_shape, dtype=DTYPE)
     return ds
 
 
@@ -253,54 +264,26 @@ def main():
         # Rank # 
         # ds_ranked = step22_rank_ecdf(ams, ANNUAL_CHUNKS)
         # print(ds_ranked)
-        ranked_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
+        # ranked_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_ranked.data_vars.keys()}
         # ds_ranked.to_zarr(ranked_path, mode='w', encoding=encoding)
 
         # fit EV #
         # ds_ranked = xr.open_zarr(ranked_path)#.loc[EXTRACT]
         # print(ds_ranked.load())
-        # ds_fitted = step23_fit_ev(ds_ranked)
-        # fitted_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('fitted'))
+        # ds_fitted = step23_fit_gev_with_ci(ds_ranked)
+        fitted_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('fitted'))
         # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
         # ds_fitted.to_zarr(fitted_path, mode='w', encoding=encoding)
         # print(ds_fitted)
 
         # GoF #
-        # ds_fitted = xr.open_zarr(fitted_path)
-        # ds_gof = step24_goodness_of_fit(ds_fitted, ANNUAL_CHUNKS)
-        # gof_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof'))
-        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_gof.data_vars.keys()}
-        # ds_gof.to_zarr(gof_path, mode='w', encoding=encoding)
-
-        # confidence interval #
-        # ds_ranked = xr.open_zarr(ranked_path).loc[EXTRACT].chunk(EXTRACT_CHUNKS)
-        # ds_ranked = step21_pole_trim(ds_ranked)
-        # print(ds_ranked)
-        # ds_ci = step31_ci(ds_ranked, n_sample=1000)
-        ci_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ci_extract'))
-        # encoding = {v: GEN_FLOAT_ENCODING for v in ds_ci.data_vars.keys()}
-        # print(ds_ci)
-        # ds_ci.to_zarr(ci_path, mode='w', encoding=encoding)
-        ds_ci = xr.open_zarr(ci_path)
-        ci_sel = ds_ci.sel(longitude=40, latitude=50, duration=24, ev_param='location')
-        print(ci_sel.load())
-
-        # ds_fitted = xr.open_zarr(fitted_path)#.loc[EXTRACT]
-        # MAE of parameters
-        # ds_fitted.load()
-        # ds_pwm = ds_fitted.sel(ev_fit='gev_pwm')
-        # ds_mle = ds_fitted.sel(ev_fit='gev_mle')
-        # shape_mae = np.abs(-ds_pwm['shape'] - ds_mle['shape']).mean()
-        # scale_mae = np.abs(ds_pwm['scale'] - ds_mle['scale']).mean()
-        # location_mae = np.abs(ds_pwm['location'] - ds_mle['location']).mean()
-        # print(location_mae)
-        # print(ds_mle['location'].mean())
-        # print(scale_mae)
-        # print(ds_mle['scale'].mean())
-        # print(shape_mae)
-        # print(ds_mle['shape'].mean())
-        # print(ds_pwm['shape'].mean())
+        ds_fitted = xr.open_zarr(fitted_path)
+        ds_gof = step24_goodness_of_fit(ds_fitted, ANNUAL_CHUNKS)
+        gof_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof'))
+        encoding = {v:GEN_FLOAT_ENCODING for v in ds_gof.data_vars.keys()}
+        print(ds_gof)
+        ds_gof.to_zarr(gof_path, mode='w', encoding=encoding)
 
         # Profiling results
         # print(prof.results[0])

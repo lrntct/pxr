@@ -1,8 +1,17 @@
 # -*- coding: utf8 -*-
 
+import math
+
 import xarray as xr
 import numpy as np
+import numba as nb
 import statsmodels.api as sm
+
+
+
+@nb.vectorize(["float32(float32)", "float64(float64)"])
+def gamma(x):
+    return math.gamma(x)
 
 
 def linregress(func, x, y, dims):
