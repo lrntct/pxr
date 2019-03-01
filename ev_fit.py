@@ -263,7 +263,7 @@ def fit_gev(ds, dtype, n_sample=500, ci_range=0.9, shape=None):
         )
     da_ci = da_ci.assign_coords(ci=['value', 'low', 'high'],
                                 ev_param=['location', 'scale', 'shape'])
-    return da_ci.rename('gev_parameters')
+    return da_ci.rename('gev')
 
 
 ## CDF ##

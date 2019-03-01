@@ -133,7 +133,7 @@ def step23_fit_gev_with_ci(ds):
     """Estimate GEV parameters and their confidence intervals.
     CI are estimated with the bootstrap method.
     """
-    ds['gev_parameters'] = ev_fit.fit_gev(ds, DTYPE, n_sample=1000, shape=-0.114)
+    ds['gev'] = ev_fit.fit_gev(ds, DTYPE, n_sample=1000, shape=-0.114)
     return ds
 
 
@@ -141,10 +141,11 @@ def step24_goodness_of_fit(ds, chunks):
     """Goodness of fit with the Lilliefors test.
     """
     # Compute the CDF
-    loc = ds['gev_parameters'].sel(ci='value', ev_param='location')
-    scale = ds['gev_parameters'].sel(ci='value', ev_param='scale')
-    shape = ds['gev_parameters'].sel(ci='value', ev_param='shape')
+    loc = ds['gev'].sel(ci='value', ev_param='location')
+    scale = ds['gev'].sel(ci='value', ev_param='scale')
+    shape = ds['gev'].sel(ci='value', ev_param='shape')
     ds['cdf'] = ev_fit.gev_cdf(ds['annual_max'], loc, scale, shape)
+    # Lilliefors
     ds['KS_D'] = gof.KS_test(ds['ecdf_goda'], ds['cdf'])
     ds = gof.lilliefors_Dcrit(ds, chunks)
     return ds
@@ -158,44 +159,9 @@ def step3_scaling_with_ci(ds):
     return ds
 
 
-def step3_scaling(ds):
-    """Take a Dataset as input containing the fitted EV parameters
-    Fit a linear function on the log of the parameters and the log of the duration
-    Keep the regression parameters as variables
-    The fitting is done on various groups of durations kept as a new dimension
-    """
-    # log-transform the variables
-    var_list = ['duration', 'location', 'scale']
-    logvar_list = ['log_duration', 'log_location', 'log_scale']
-    for var, log_var in zip(var_list, logvar_list):
-        ds[log_var] = np.log10(ds[var])
-
-    ds_list = []
-    for dur_name, durations in DURATION_DICT.items():
-        # Select only the durations of interest
-        ds_sel = ds.sel(duration=durations)
-        da_list = []
-        for g_param_name in ['location', 'scale']:
-            param_col = 'log_{}'.format(g_param_name)
-            # Do the linear regression.
-            slope, intercept, rvalue, pvalue, stderr = linregress(nanlinregress,
-                                                  ds_sel['log_duration'],
-                                                  ds_sel[param_col],
-                                                  ['duration'])
-            for var_name, da in zip(['line_slope', 'line_intercept', 'line_rvalue', 'line_pvalue', 'line_stderr'],
-                                    [slope, intercept, rvalue, pvalue, stderr]):
-                da.name = '{}_{}'.format(g_param_name, var_name)
-                da_list.append(da)
-        # Group all DataArrays in a single dataset
-        ds_fit = xr.merge(da_list)
-        # Keep the the results in their own dimension
-        ds_fit = ds_fit.expand_dims('scaling_extent')
-        ds_fit.coords['scaling_extent'] = [dur_name]
-        ds_list.append(ds_fit)
-    ds_fit = xr.concat(ds_list, dim='scaling_extent')
-    # Add those DataArray to the general Dataset
-    ds = xr.merge([ds, ds_fit])
-    return ds
+def to_zarr(ds, path):
+    encoding = {v:GEN_FLOAT_ENCODING for v in ds.data_vars.keys()}
+    ds.to_zarr(path, mode='w', encoding=encoding)
 
 
 def main():
@@ -217,52 +183,39 @@ def main():
         # print(argmax.load())
         # argmax.to_zarr(argmax_path, mode='w', encoding=encoding)
 
-        # amax_path = os.path.join(DATA_DIR, AMS_FILE)
-        # ams = xr.open_zarr(amax_path)
-        # print(ams)
-
         # reshape to 1 deg
         # print(ds_trimmed)
         # ds_r = helper.da_pool(ds_trimmed['annual_max'], .25, 1).to_dataset().chunk(ANNUAL_CHUNKS_1DEG)
         # print(ds_r)
 
-        # ams_path = os.path.join(DATA_DIR, AMS_FILE)
-        # ams = xr.open_zarr(ams_path)
-        # ds_trimmed = step21_pole_trim(ams1)
+        ams_path = os.path.join(DATA_DIR, AMS_FILE)
+        path_ranked = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
+        path_gev = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gev'))
+        path_gof = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof'))
+        path_scaling = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('scaling'))
 
+        ams = xr.open_zarr(ams_path)
 
         # Rank # 
         # ds_ranked = step22_rank_ecdf(ams, ANNUAL_CHUNKS)
         # print(ds_ranked)
-        # ranked_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('ranked'))
-        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_ranked.data_vars.keys()}
-        # ds_ranked.to_zarr(ranked_path, mode='w', encoding=encoding)
+        # to_zarr(ds_ranked, path_ranked)
 
         # fit EV #
-        # ds_ranked = xr.open_zarr(ranked_path)#.loc[EXTRACT]
-        # print(ds_ranked.load())
-        # ds_fitted = step23_fit_gev_with_ci(ds_ranked)
-        fitted_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('fitted'))
-        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_fitted.data_vars.keys()}
-        # ds_fitted.to_zarr(fitted_path, mode='w', encoding=encoding)
-        # print(ds_fitted)
+        ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT]
+        ds_gev = step23_fit_gev_with_ci(ds_ranked)
+        to_zarr(ds_gev, path_gev)
 
         # GoF #
-        # ds_fitted = xr.open_zarr(fitted_path)
-        # ds_gof = step24_goodness_of_fit(ds_fitted, ANNUAL_CHUNKS)
-        gof_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('gof'))
-        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_gof.data_vars.keys()}
-        # print(ds_gof)
-        # ds_gof.to_zarr(gof_path, mode='w', encoding=encoding)
+        ds_gev = xr.open_zarr(path_gev)
+        ds_gof = step24_goodness_of_fit(ds_gev, ANNUAL_CHUNKS)
+        to_zarr(ds_gof, path_gof)
 
         # Scaling #
-        ds_gof = xr.open_zarr(gof_path)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
-        # print(ds_gof)
+        ds_gof = xr.open_zarr(path_gof)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
         ds_scaling = step3_scaling_with_ci(ds_gof)
-        scaling_path = os.path.join(DATA_DIR, ANNUAL_FILE_BASENAME.format('scaling'))
-        encoding = {v:GEN_FLOAT_ENCODING for v in ds_scaling.data_vars.keys()}
-        print(ds_scaling)
-        ds_scaling.to_zarr(scaling_path, mode='w', encoding=encoding)
+        to_zarr(ds_scaling, path_scaling)
+
 
 
 if __name__ == "__main__":
