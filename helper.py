@@ -7,7 +7,6 @@ import numpy as np
 import numba as nb
 import bottleneck
 import numbagg
-import statsmodels.api as sm
 
 
 @nb.vectorize(["float32(float32)", "float64(float64)"])

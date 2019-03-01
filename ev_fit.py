@@ -42,13 +42,6 @@ def rank_ams(da_ams):
 
 
 @nb.njit()
-def plotting_position(rank, n_obs, a, b):
-    """General plotting position
-    """
-    return (rank - a) / (n_obs + b)
-
-
-@nb.njit()
 def ecdf_weibull(rank, n_obs):
     """Return the Weibull plotting position
     Recommended by:
@@ -57,14 +50,14 @@ def ecdf_weibull(rank, n_obs):
     Journal of Applied Meteorology and Climatology 45 (2): 334–40.
     https://doi.org/10.1175/JAM2349.1.
     """
-    return plotting_position(rank, n_obs, fscalar(0), fscalar(1))
+    return rank / (n_obs + fscalar(1))
 
 
 @nb.njit()
 def ecdf_gringorten(rank, n_obs):
     """Return the Gringorten plotting position
     """
-    return plotting_position(rank, n_obs, fscalar(0.44), fscalar(.12))
+    return (rank - fscalar(0.44)) / (n_obs + fscalar(.12))
 
 
 @nb.njit()
@@ -75,7 +68,7 @@ def ecdf_landwehr(rank, n_obs):
     Journal of the Royal Statistical Society: Series B (Methodological), 52(1), 105–124.
     https://doi.org/10.1111/j.2517-6161.1990.tb01775.x
     """
-    return plotting_position(rank, n_obs, fscalar(0.35), fscalar(0))
+    return (rank - fscalar(0.35)) / n_obs
 
 
 @nb.njit()
@@ -86,10 +79,21 @@ def ecdf_hosking(rank, n_obs):
     Water Resources Research 31 (8): 2019–25.
     https://doi.org/10.1029/95WR01230.
     """
-    return plotting_position(rank, n_obs, fscalar(0), fscalar(0))
+    return rank / n_obs
 
 
 @nb.njit()
+def ecdf_goda_jit(rank, n_obs):
+    """Return the plotting position defined in:
+    Goda, Yoshimi. 2011.
+    “Plotting-Position Estimator for the L-Moment Method and Quantile Confidence Interval
+    for the GEV, GPA, and Weibull Distributions Applied for Extreme Wave Analysis.”
+    Coastal Engineering Journal 53 (2): 111–49.
+    https://doi.org/10.1142/S057856341100229X.
+    """
+    return (rank - fscalar(0.45)) / n_obs
+
+
 def ecdf_goda(rank, n_obs):
     """Return the plotting position defined in:
     Goda, Yoshimi. 2011.
@@ -98,7 +102,7 @@ def ecdf_goda(rank, n_obs):
     Coastal Engineering Journal 53 (2): 111–49.
     https://doi.org/10.1142/S057856341100229X.
     """
-    return plotting_position(rank, n_obs, fscalar(0.45), fscalar(0))
+    return (rank - 0.45) / n_obs
 
 
 ## GEV fit PWM / L-moments ##
@@ -215,7 +219,7 @@ def gev_from_samples(arr_ams, ax_year, sampling_idx, n_obs, shape_param):
     # rank samples
     rank = bottleneck.nanrankdata(arr_samples, axis=ax_year).astype(fscalar)
     # fit distribution. ev_apams is a tuple of ndarrays
-    ecdf = ecdf_goda(rank, n_obs)
+    ecdf = ecdf_goda_jit(rank, n_obs)
     ev_params = gev_pwm(arr_samples, ecdf, n_obs, ax_year, shape=shape_param)
     # Add one axis. Changes shape to (ev_params, samples)
     return np.array(ev_params)
