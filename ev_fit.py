@@ -5,10 +5,8 @@ import os
 import math
 
 import xarray as xr
-import scipy.stats
 import numpy as np
 import numba as nb
-import bottleneck
 
 import helper
 
@@ -291,44 +289,6 @@ def gev_cdf(x, loc, scale, shape):
     return xr.where(shape == 0,
                     gumbel_cdf(x, loc, scale),
                     gev_cdf_nonzero(x, loc, scale, shape))
-
-
-## Quantiles ##
-
-@nb.njit()
-def lnt(T):
-    return -np.log(1 - 1/T)
-
-
-@nb.njit()
-def gumbel_quantile(T, loc, scale):
-    """Return quantile (i.e, intensity) for a given return period T in years
-    """
-    return loc - scale * np.log(lnt(T))
-
-
-@nb.njit()
-def gev_quantile_nonzero(T, loc, scale, shape):
-    """Return quantile (i.e, intensity) for a given return period T in years
-    Consider an EV type II if shape<0
-    """
-    num = scale * (1 - lnt(T)**shape)
-    return loc + num / shape
-
-
-@nb.njit()
-def gev_quantile(T, loc, scale, shape):
-    """Overeem, Aart, Adri Buishand, and Iwan Holleman. 2008.
-    “Rainfall Depth-Duration-Frequency Curves and Their Uncertainties.”
-    Journal of Hydrology 348 (1–2): 124–34.
-    https://doi.org/10.1016/j.jhydrol.2007.09.044.
-
-    T: return period in years
-    """
-    return np.where(shape == 0,
-                    gumbel_quantile(T, loc, scale),
-                    gev_quantile_nonzero(T, loc, scale, shape))
-
 
 
 ## Functions not used in the analysis ##
