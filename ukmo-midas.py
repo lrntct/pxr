@@ -19,14 +19,16 @@ import numpy as np
 import shapely.geometry
 import geopandas as gpd
 
+START_YEAR = 1979
+END_YEAR = 2018
 
 BASE_DIR = '/home/lunet/gylc4/geodata/MIDAS/'
 BASE_FILE = 'midas_rainhrly_{y}01-{y}12.txt'
 STATIONS_DIR = os.path.join(BASE_DIR, 'stations')
 STATIONS_LIST = os.path.join(BASE_DIR, 'src_id_list.xls')
-OUT_FILE = '/home/lunet/gylc4/geodata/MIDAS/midas_precip_1950-2017.zarr'
-SELECT_FILE = '../data/MIDAS/midas_1979-2017_precip_select.zarr'
-PAIR_FILE = '../data/MIDAS/midas_1979-2017_precip_pairs.nc'
+OUT_FILE = '/home/lunet/gylc4/geodata/MIDAS/midas_precip_{s}-{e}.zarr'
+SELECT_FILE = '../data/MIDAS/midas_{s}-{e}_precip_select.zarr'.format(s=START_YEAR, e=END_YEAR)
+PAIR_FILE = '../data/MIDAS/midas_{s}-{e}_precip_pairs.nc'
 
 # https://www.metoffice.gov.uk/public/weather/climate-extremes/#?tab=climateExtremes
 UK_HOURLY_MAX = 92.0
@@ -52,30 +54,45 @@ DTYPES = {#'end_time':str,
 
 CHUNKS = {'end_time': -1, 'station': 30}
 DTYPE = 'float32'
-GEN_FLOAT_ENCODING = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
-# ENCODING = {'precip_depth': GEN_FLOAT_ENCODING,
-#             'precip_period': GEN_FLOAT_ENCODING,
-#             'elevation': {'dtype': DTYPE},
-#             'latitude': {'dtype': DTYPE},
-#             'longitude': {'dtype': DTYPE}}
+FLOAT_ENCODING = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
+INT_ENCODING = {'dtype': 'uint32', 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
+STR_ENCODING = {'dtype': 'U', 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
+GEN_ENCODING = {'compressor': zarr.Blosc(cname='lz4', clevel=9)}
 
-# Stations inside an ERA5 cell
-STATION_PAIRS = [('SALSBURGH', 'DRUMALBIN'),
-                 ('LEEMING', 'TOPCLIFFE'),
-                 ('LARKHILL', 'BOSCOMBE DOWN'),
-                 ('HEATHROW', 'NORTHOLT')]
+KEEP_VARS = ['id', 'ob_hour_count', 'prcp_amt',
+             'prcp_dur', 'rec_st_ind', 'src_id', 'version_num']
 
+ENCODING = {'id': INT_ENCODING,
+            # 'id_type': STR_ENCODING,
+            'ob_hour_count': INT_ENCODING,
+            'version_num': INT_ENCODING,
+            # 'met_domain_name': STR_ENCODING,
+            'src_id': INT_ENCODING,
+            'rec_st_ind': INT_ENCODING,
+            'prcp_amt': FLOAT_ENCODING,
+            'prcp_dur': FLOAT_ENCODING,
+            # 'prcp_amt_q': STR_ENCODING,
+            # 'prcp_dur_q': STR_ENCODING,
+            # 'meto_stmp_time': STR_ENCODING,
+            # 'midas_stmp_etime': STR_ENCODING,
+            # 'prcp_amt_j': STR_ENCODING
+            }
 
-def read_stations(data_dir):
+def read_stations(data_dir, start_year, end_year):
+    """Read station data from text file.
+    Return a xarray DataArray.
+    """
+    prefix = 'midas_rainhrly_'
+    suffix = '.txt'
     df_list = []
-    for filename in os.listdir(data_dir)[:]:
-        if filename.endswith('12.txt'):
-            print(filename)
-            filepath = os.path.join(data_dir, filename)
-            df = pd.read_csv(filepath, sep=',', names=HEADER, na_values=' ',
-                            dtype=DTYPES,
-                            index_col=False, parse_dates=['end_time'])
-            df_list.append(df)
+    for year in range(start_year, end_year+1):
+        filename = BASE_FILE.format(y=year)
+        print(filename)
+        filepath = os.path.join(data_dir, filename)
+        df = pd.read_csv(filepath, sep=',', names=HEADER, na_values=' ',
+                        dtype=DTYPES, engine='c',
+                        index_col=False, parse_dates=['end_time'])
+        df_list.append(df)
 
     # One dataframe per station
     df_all = pd.concat(df_list)
@@ -92,15 +109,7 @@ def read_stations(data_dir):
         # delete duplicated index
         df.set_index('end_time', drop=True, inplace=True)
         df_dropped = df[~df.index.duplicated(keep='first')]
-
-        # Populate index
-        # for i, col_name in enumerate(IDX_COL_NAMES):
-        #     idx[i].append(df_dropped[col_name][0])
-
         ds = df_dropped.to_xarray()
-
-        # print(ds)
-    #     da.name = 'precipitation'
         ds = ds.expand_dims('station')
         src_id = df_dropped['src_id'].unique()[0]  # station unique identifier
         ds.coords['station'] = [src_id]
@@ -144,10 +153,8 @@ def select_stations(ds, ymin, ymax):
     # print(full_stations.load())
     kept_station_code = full_stations['station'].values
 
-    kept_col = ['id', 'full_years', 'ob_hour_count', 'prcp_amt',
-                'prcp_dur', 'rec_st_ind', 'src_id', 'version_num']
+    kept_col = KEEP_VARS + ['full_years']
     ds_sel = ds_cc.loc[{'station':kept_station_code}][kept_col]
-
     return ds_sel
 
 
@@ -226,57 +233,30 @@ def to_gdf(ds):
     return gdf
 
 
-def station_pairs(ds):
-    sel_stations_names = [n for t in STATION_PAIRS for n in t]
-    print(sel_stations_names)
-    ds.coords['station'] = ds['src_name']
-    all_stations_name = [n.decode('utf8') for n in ds.coords['station'].values]
-
-    p_mean_list = []
-    for s1, s2 in STATION_PAIRS:
-        # boolean array of the selected stations as true
-        arr_stations_sel = np.isin(all_stations_name, [s1, s2])
-        # Indices of the selected stations
-        station_sel_idx = np.where(arr_stations_sel)[0]
-        # select the two stations
-        ds_pair = ds.isel(station=station_sel_idx.tolist())
-        # Create name of the pair
-        station_pair_names = [b.decode('utf8') for b in ds_pair['station'].values]
-        pair_name = '--'.join(station_pair_names)
-        # Calculate P mean of the pair
-        prcp_mean = ds_pair['prcp_amt'].mean(dim='station')
-        # Keep the mean in a new dimension
-        prcp_mean = prcp_mean.expand_dims('pair')
-        prcp_mean.coords['pair'] = [pair_name]
-
-        p_mean_list.append(prcp_mean)
-    prcp_mean_all = xr.concat(p_mean_list, dim='pair')
-    return prcp_mean_all.to_dataset()
-
-
 def main():
     with ProgressBar():
-        # print(df.head())
-        # ds = read_stations(STATIONS_DIR).chunk(CHUNKS)
+        # ds = read_stations(STATIONS_DIR, START_YEAR, END_YEAR).chunk(CHUNKS)
         # print(ds)
-        # ds.to_zarr(OUT_FILE, mode='w')
-        ds = xr.open_zarr(OUT_FILE)
+        # ds.to_zarr(OUT_FILE.format(s=START_YEAR, e=END_YEAR), mode='w')
+
+        ds = xr.open_zarr(OUT_FILE.format(s=1950, e=2018))
         ds = quality_assessment(ds)
-        ds_sel = select_stations(ds, 1979, 2017).chunk(CHUNKS)
-        # ds_loaded = ds_sel.load()
+        ds_sel = select_stations(ds, START_YEAR, END_YEAR)#.chunk(CHUNKS)
+        ds_loaded = ds_sel.load()
         print(ds_sel)
         # print(ds_sel['prcp_amt'])
         # print(ds_loaded['prcp_amt'].mean())
         # print(ds_loaded['prcp_amt'].min())
         # print(ds_loaded['prcp_amt'].max())
         # print(ds_loaded['ob_hour_count'].max())
-        # encoding = {v:GEN_FLOAT_ENCODING for v in ds_sel.data_vars.keys()}
-        # ds_sel.load().to_zarr(SELECT_FILE, mode='w')
+        encoding = {'full_years': INT_ENCODING, **ENCODING}
+        ds_sel.to_zarr(SELECT_FILE, mode='w', encoding=encoding)
 
-        # ds_sel = xr.open_zarr(SELECT_FILE)
-        # gdf = to_gdf(ds_sel)
-        # out_path = os.path.join('../data/MIDAS', "midas.gpkg")
-        # gdf.to_file(out_path, driver="GPKG")
+        ds_sel = xr.open_zarr(SELECT_FILE)
+        print(ds_sel)
+        gdf = to_gdf(ds_sel)
+        out_path = os.path.join('../data/MIDAS', "midas.gpkg")
+        gdf.to_file(out_path, driver="GPKG")
         # print(ds_sel.max().load())
 
         # ds_pairs = station_pairs(ds_sel)
