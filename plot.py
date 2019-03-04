@@ -70,7 +70,7 @@ def single_map(da, cbar_label, title, fig_name, center=None, reverse=False):
     """https://cbrownley.wordpress.com/2018/05/15/visualizing-global-land-temperatures-in-python-with-scrapy-xarray-and-cartopy/
     """
     plt.figure(figsize=(8, 5))
-    ax_p = plt.gca(projection=ctpy.crs.EqualEarth()(), aspect='auto')
+    ax_p = plt.gca(projection=ctpy.crs.EqualEarth(), aspect='auto')
     if center is not None:
         if reverse:
             cmap = 'RdBu_r'
@@ -597,7 +597,8 @@ def fig_map_KS(ds):
     Dcrit = ds['Dcrit'].sel(significance_level=alpha).values
     Dmean = ds['KS_D'].mean(dim='duration')
     single_map(Dmean,
-        title='Lilliefors test statistic (1979-2018, mean on $d$, $\\alpha=${})'.format(alpha),
+        # title='Lilliefors test statistic (1979-2018, mean on $d$, $\\alpha=${})'.format(alpha),
+        title='',
         cbar_label='$D$',
         center=Dcrit,
         reverse=True,
@@ -610,28 +611,6 @@ def fig_maps_gev24h(ds):
     multi_maps([da_loc, da_scale],
                 ['Location $\psi$', 'Scale $\lambda$'],
                 'Parameter value', 'gev_params_24h_1979-2018.png')
-
-
-def table_rsquared_quantiles(ds, dim):
-    # print(ds['scaling_extent'].load())
-    ds_rsquared = ds[['location_line_rvalue', 'scale_line_rvalue']].sel(scaling_extent=['daily', 'all'])**2
-    q =  ds_rsquared.load().quantile([0.01, 0.5, 0.99], dim=dim)
-    print(q['location_line_rvalue'])
-    print(q['scale_line_rvalue'])
-
-
-def table_r_quantiles(ds, dim):
-    # print(ds['scaling_extent'].load())
-    ds_r = ds[['location_line_rvalue', 'scale_line_rvalue']].sel(scaling_extent=[b'daily', b'all'])
-    q = ds_r.load().quantile([0.01, 0.5, 0.99, 0.999], dim=dim)
-    print(q['location_line_rvalue'])
-    print(q['scale_line_rvalue'])
-
-
-def table_r_sigcount(ds, alpha, dim):
-    ds_r = ds[['location_line_pvalue', 'scale_line_pvalue']].sel(scaling_extent=[
-                                                                 b'daily', b'all'])
-    print(ds_r.where(ds_r > alpha).count(dim=dim).load())
 
 
 def fig_maps_r(ds):
@@ -817,6 +796,14 @@ def fig_scaling_hexbin(ds):
            'scaling_gradients_hexbin.png')
 
 
+def table_r_sigcount(ds, alpha, dim):
+    """Count the number of points with p > alpha (i.e. not significant).
+    """
+    ds_r = ds[['location_line_pvalue', 'scale_line_pvalue']].sel(scaling_extent=[
+                                                                 b'daily', b'all'])
+    print(ds_r.where(ds_r > alpha).count(dim=dim).load())
+
+
 def table_count_noGEVfit(ds):
     da_loc = ds['gev'].sel(ci='value', ev_param='location')
     num_null = (~np.isfinite(da_loc)).sum(dim=['latitude', 'longitude'])
@@ -827,6 +814,19 @@ def table_count_noscalingfit(ds):
     da_scaling_slope = ds['gev_scaling'].sel(ci='value', ev_param=['location', 'scale'], scaling_param='slope')
     num_null = np.isnan(da_scaling_slope).sum(dim=['latitude', 'longitude'])
     print(num_null.load())
+
+
+def table_rsquared_quantiles(ds, dim):
+    ds_rsquared = ds['gev_scaling'].sel(ci='value', ev_param=['location', 'scale'], scaling_param='rsquared')
+    q =  ds_rsquared.load().quantile([0.01, 0.05], dim=dim)
+    print(q)
+
+
+def table_ks_count(ds, dim):
+    ks_mean = ds['KS_D'].mean(dim='duration')
+    print(ds['Dcrit'].load())
+    q =  ks_mean.load().quantile([0.95, 0.99], dim=dim)
+    print(q)
 
 
 def prepare_midas_mean(ds_era, ds_midas, ds_midas_mean):
@@ -1043,15 +1043,15 @@ def main():
 
     print(ds_era)
 
-    # fig_map_KS(ds_era)
+    fig_map_KS(ds_era)
 
     # fig_map_anderson(ds_era)
     # fig_maps_gev24h(ds_era)
-    table_count_noGEVfit(ds_era)
-    table_count_noscalingfit(ds_era)
-    # table_r_quantiles(ds_era, dim=['longitude', 'latitude'])
-    # table_r_sigcount(ds_era, 0.05, dim=['longitude', 'latitude'])
-    # table_r_sigcount(ds_era, 0.01, dim=['longitude', 'latitude'])
+    # table_count_noGEVfit(ds_era)
+    # table_count_noscalingfit(ds_era)
+    # table_rsquared_quantiles(ds_era, dim=['longitude', 'latitude'])
+    # table_ks_count(ds_era, ['longitude', 'latitude'])
+
     # fig_scaling_gradients_maps(ds_era)
     # fig_scaling_gradients_ratio_maps(ds_era)
     # fig_scaling_differences_all(ds_era, ds_midas)
