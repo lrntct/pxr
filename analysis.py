@@ -13,8 +13,6 @@ from dask.distributed import Client, LocalCluster
 import zarr
 import scipy.stats
 
-from bokeh.io import export_png
-
 import ev_fit
 import gof
 import scaling
