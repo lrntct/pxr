@@ -49,8 +49,6 @@ DURATION_DICT = {'all': DURATIONS_ALL, 'daily': DURATIONS_DAILY, 'subdaily': DUR
 TEMP_RES = 1
 # TEMP_RES = 24
 
-LR_RES = ['slope', 'intercept', 'rvalue', 'pvalue', 'stderr']
-
 DTYPE = 'float32'
 
 HOURLY_CHUNKS = {'time': -1, 'latitude': 16, 'longitude': 16}
@@ -130,9 +128,9 @@ def step24_goodness_of_fit(ds, chunks):
     """Goodness of fit with the Lilliefors test.
     """
     # Compute the CDF
-    loc = ds['gev'].sel(ci='value', ev_param='location')
-    scale = ds['gev'].sel(ci='value', ev_param='scale')
-    shape = ds['gev'].sel(ci='value', ev_param='shape')
+    loc = ds['gev'].sel(ci='estimate', ev_param='location')
+    scale = ds['gev'].sel(ci='estimate', ev_param='scale')
+    shape = ds['gev'].sel(ci='estimate', ev_param='shape')
     da_ams = ds['annual_max']
     ds['cdf'] = ev_fit.gev_cdf(da_ams, loc, scale, shape).transpose(*da_ams.dims)
     # Lilliefors
@@ -210,10 +208,10 @@ def main():
         client = Client(cluster)
 
         # fit EV #
-        print('Fit EV')
-        ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT]
-        ds_gev = step23_fit_gev_with_ci(ds_ranked)
-        to_zarr(ds_gev, path_gev)
+        # print('Fit EV')
+        # ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT]
+        # ds_gev = step23_fit_gev_with_ci(ds_ranked)
+        # to_zarr(ds_gev, path_gev)
 
         # GoF #
         print('Goodness of fit')
@@ -222,7 +220,7 @@ def main():
         to_zarr(ds_gof, path_gof)
 
         # Scaling #
-        print('scaling')
+        print('Scaling')
         ds_gof = xr.open_zarr(path_gof)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
         ds_scaling = step3_scaling_with_ci(ds_gof)
         to_zarr(ds_scaling, path_scaling)
