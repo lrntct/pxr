@@ -39,7 +39,7 @@ def y_gev_nonzero(T, shape):
     Journal of Hydrology, 138(1–2), 247–267.
     http://doi.org/10.1016/0022-1694(92)90167-T
     """
-    return (1 - lnt(T)**shape)
+    return (1 - lnt(T)**shape) / shape
 
 
 def gumbel_quantile(T, loc, scale):
@@ -53,7 +53,7 @@ def gev_quantile_nonzero(T, loc, scale, shape):
     """Return quantile (i.e, intensity) for a given return period T in years
     Consider an EV type II if shape<0
     """
-    return loc + scale * y_gev_nonzero(T, shape) / shape
+    return loc + scale * y_gev_nonzero(T, shape)
 
 
 def gev_quantile(T, loc, scale, shape):
@@ -182,7 +182,7 @@ def f_c3_estim(shape):
     return 0.8046 - 2.8890*shape + 8.7874*shape**2 - 10.375*shape**3
 
 
-def gev_quantile_var_fixed_shape(T, ds):
+def gev_quantile_var_fixed_shape(T, c1, c2, c3, ds):
     """Return the variance of the GEV quantile for a given return period.
     See:
     Lu, L.-H., & Stedinger, J. R. (1992).
@@ -196,10 +196,8 @@ def gev_quantile_var_fixed_shape(T, ds):
     y = xr.where(shape == 0,
                  y_gumbel(T),
                  y_gev_nonzero(T, shape))
-    c1 = ds['gev_var'].sel(c_values='c1')
-    c2 = ds['gev_var'].sel(c_values='c2')
-    c3 = ds['gev_var'].sel(c_values='c3')
-    return scale*scale * (c1 + c2*y + c3 + y*y) / n_obs
+    return scale*scale * (c1 + c2*y + c3*y*y) / n_obs
+
 
 def print_c(scale, shape, n_obs):
     print('c1', f_c1(scale, shape, n_obs), f_c1_estim(shape))
