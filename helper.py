@@ -5,7 +5,6 @@ import math
 import xarray as xr
 import numpy as np
 import numba as nb
-import bottleneck
 
 
 @nb.vectorize(["float32(float32)", "float64(float64)"])
@@ -17,6 +16,18 @@ def log(x):
 def gamma(x):
     return math.gamma(x)
 
+
+def ci_range_to_qlevels(range_list):
+    """get a list of Confidence interval level.
+    Return a list of double sided quantile levels
+    """
+    q_levels = [0.5]  # At least the median
+    for r in range_list:
+        c_low = (1 - r) / 2
+        c_high = 1 - c_low
+        q_levels.append(c_low)
+        q_levels.append(c_high)
+    return sorted(q_levels)
 
 # @nb.njit()
 def OLS_jit(x, y, axis=-1):

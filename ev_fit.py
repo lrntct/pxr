@@ -7,6 +7,7 @@ import math
 import xarray as xr
 import numpy as np
 import numba as nb
+import bottleneck
 
 import helper
 
@@ -39,7 +40,6 @@ def rank_ams(da_ams):
     return ranks.transpose(*da_ams.dims)
 
 
-@nb.njit()
 def ecdf_weibull(rank, n_obs):
     """Return the Weibull plotting position
     Recommended by:
@@ -48,10 +48,9 @@ def ecdf_weibull(rank, n_obs):
     Journal of Applied Meteorology and Climatology 45 (2): 334–40.
     https://doi.org/10.1175/JAM2349.1.
     """
-    return rank / (n_obs + fscalar(1))
+    return rank / (n_obs + 1)
 
 
-@nb.njit()
 def ecdf_gringorten(rank, n_obs):
     """Return the Gringorten plotting position
     """
@@ -211,19 +210,19 @@ def gev_from_samples(arr_ams, ax_year, sampling_idx, n_obs, shape_param):
     """draw sample with replacement and find GEV parameters using the
     Probability-Weighted Moments method.
     """
-    # Draw samples. Add dimension n_sample in first position
+    # Draw samples. Add dimension n_sample in first position.
     arr_samples = arr_ams[sampling_idx]
     ax_year += 1
     # rank samples
     rank = bottleneck.nanrankdata(arr_samples, axis=ax_year).astype(fscalar)
-    # fit distribution. ev_apams is a tuple of ndarrays
-    ecdf = ecdf_goda_jit(rank, n_obs)
+    # fit distribution. ev_apams is a tuple of ndarrays.
+    ecdf = ecdf_hosking(rank, n_obs)
     ev_params = gev_pwm(arr_samples, ecdf, n_obs, ax_year, shape=shape_param)
-    # Add one axis. Changes shape to (ev_params, samples)
+    # Add one axis. Changes shape to (ev_params, samples).
     return np.array(ev_params)
 
 
-def gev_func(arr_ams, ax_year, sampling_idx, n_obs, ci_range, shape_param):
+def gev_func(arr_ams, ax_year, sampling_idx, n_obs, q_levels, shape_param):
     """Estimate the GEV parameters and their confidence interval using the bootstrap method.
     The last row of sample idx is the original order, for the actual parameters estimates.
     arr_ams is one-dimensional
@@ -233,27 +232,26 @@ def gev_func(arr_ams, ax_year, sampling_idx, n_obs, ci_range, shape_param):
     # Get the parameters from the original sample order (last sample)
     orig_params = np.expand_dims(ev_params[:, -1], axis=0)
     # get confidence interval. Changes shape to (quantiles, ev_params)
-    c_low = (1 - ci_range) / 2
-    c_high = 1 - c_low
-    quantiles = np.nanquantile(ev_params[:, :-1], [c_low, c_high], axis=1)
+    quantiles = np.nanquantile(ev_params[:, :-1], q_levels, axis=1)
     # Group parameters from the original sample and their confidence interval
     return np.concatenate([orig_params, quantiles])
 
 
-def fit_gev(ds, dtype, n_sample=500, ci_range=0.9, shape=None):
+def fit_gev(ds, dtype, n_sample=500, ci_range=[0.95], shape=None):
     """Fit the GEV
     """
     # Random sampling of indices, shared across all cells
     n_obs = len(ds['year'])
     sampling_idx = helper.get_sampling_idx(n_sample, n_obs)
     # Estimate parameters and CI
+    q_levels = helper.ci_range_to_qlevels(ci_range)
     da_ci = xr.apply_ufunc(
         gev_func,
         ds['annual_max'],
         kwargs={'sampling_idx': sampling_idx,
                 'ax_year': 0,
                 'n_obs': n_obs,
-                'ci_range': ci_range,
+                'q_levels': q_levels,
                 'shape_param': shape},
         input_core_dims=[['year']],
         output_core_dims=[['ci', 'ev_param']],
@@ -261,9 +259,9 @@ def fit_gev(ds, dtype, n_sample=500, ci_range=0.9, shape=None):
         dask='parallelized',
         # dask='allowed',
         output_dtypes=[dtype],
-        output_sizes={'ci': 3, 'ev_param': 3}
+        output_sizes={'ci': len(q_levels)+1, 'ev_param': 3}
         )
-    da_ci = da_ci.assign_coords(ci=['value', 'low', 'high'],
+    da_ci = da_ci.assign_coords(ci=['estimate'] + q_levels,
                                 ev_param=['location', 'scale', 'shape'])
     return da_ci.rename('gev')
 
