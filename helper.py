@@ -6,7 +6,6 @@ import xarray as xr
 import numpy as np
 import numba as nb
 import bottleneck
-import numbagg
 
 
 @nb.vectorize(["float32(float32)", "float64(float64)"])
