@@ -26,16 +26,12 @@ import ev_fit
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
 # HOURLY_FILE = 'era5_2000-2012_precip.zarr'
-ERA_ANNUAL_FILE = 'era5_1979-2017_ams_fitted.zarr'
-# GAUGES_FILE = '../data/GHCN/ghcn.nc'
-# GHCN_ANNUAL_FILE = '../data/GHCN/ghcn_2000-2017_precip_scaling.nc'
-MIDAS_ANNUAL_FILE = '../data/MIDAS/midas_2000-2017_precip_scaling.nc'
-MIDAS_PAIRS = '../data/MIDAS/midas_2000-2017_precip_pairs_scaling.nc'
-# HADISD_ANNUAL_FILE = '../data/HadISD/hadisd_2000-2017_precip_scaling.nc'
+ERA_AMS_FILE = 'era5_1979-2018_ams_scaling2.zarr'
+MIDAS_AMS_FILE = '../data/MIDAS/midas_1979-2018_ams_scaling.zarr'
 PLOT_DIR = '../plot'
 
 MIDAS_SUM = '../data/midas_sum_uk.tiff'
-MIDAS_STATIONS = '../data/MIDAS/midas_wgs84.gpkg'
+MIDAS_STATIONS = '../data/MIDAS/midas.gpkg'
 NE_LAND = '../data/ne_land_10m.gpkg'
 
 EXTRACT = dict(latitude=slice(45, -45),
@@ -74,7 +70,7 @@ def single_map(da, cbar_label, title, fig_name, center=None, reverse=False):
     """https://cbrownley.wordpress.com/2018/05/15/visualizing-global-land-temperatures-in-python-with-scrapy-xarray-and-cartopy/
     """
     plt.figure(figsize=(8, 5))
-    ax_p = plt.gca(projection=ctpy.crs.Robinson(), aspect='auto')
+    ax_p = plt.gca(projection=ctpy.crs.EqualEarth()(), aspect='auto')
     if center is not None:
         if reverse:
             cmap = 'RdBu_r'
@@ -95,7 +91,7 @@ def single_map(da, cbar_label, title, fig_name, center=None, reverse=False):
 
 
 def multi_maps(ds, var_names, disp_names, value_name, fig_name, duration=24, sqr=False, center=None, reverse=False):
-    crs = ctpy.crs.Robinson()
+    crs = ctpy.crs.EqualEarth()()
     sel = ds.loc[{'duration': duration}]
     # reshape variables as dimension
     da_list = []
@@ -321,7 +317,7 @@ def plot_scaling_per_site(ds, fig_name):
 
     # Draw map
     ax_map = fig.add_subplot(row_num, col_num, ax_num,
-                             projection=ctpy.crs.Robinson(),
+                             projection=ctpy.crs.EqualEarth()(),
                              aspect='auto')
     plot_point_map(ds, ax_map)
     ax_num += 1
@@ -457,8 +453,8 @@ def probability_plot(ds, sites, fig_name):
     row_num = math.ceil(len(sites) / colwrap)
     fig, axes = plt.subplots(row_num, colwrap, sharey=False, sharex=True, figsize=(9, 7))
     for ax, site_name in zip(axes.flat, sites.keys()):
-       df_site = df_cdf.loc[df_cdf['site'] == site_name]
-       # ECDF
+        df_site = df_cdf.loc[df_cdf['site'] == site_name]
+        # ECDF
         ecdf = df_site.loc[df_cdf['cdf'].str.startswith('ecdf_')]
         ecdf.plot(x='T', y='annual_max', logx=True, legend=False, ax=ax,
                   linestyle='', lw=0.1, marker='x', markeredgecolor='.1',
@@ -519,7 +515,7 @@ def plot_gauges_map_from_ds(ds, id_dim, fig_name, global_extent=True):
     # Plot the gauges on a world map
     plt.figure(figsize=(12, 12))
     if global_extent:
-        ax_p = plt.gca(projection=ctpy.crs.Robinson(), aspect='auto')
+        ax_p = plt.gca(projection=ctpy.crs.EqualEarth()(), aspect='auto')
         ax_p.set_global()
     else:
         ax_p = plt.gca(projection=ctpy.crs.PlateCarree(), aspect='auto')
@@ -536,54 +532,42 @@ def plot_gauges_map_from_ds(ds, id_dim, fig_name, global_extent=True):
 
 
 def fig_gauges_map(fig_name):
-    crs = ctpy.crs.PlateCarree()
-    rast = xr.open_rasterio(MIDAS_SUM, parse_coordinates=True).drop('band')
+    source_crs = ctpy.crs.PlateCarree()
+    display_crs =  ctpy.crs.OSGB()
     midas = gpd.read_file(MIDAS_STATIONS)
     ne_land = gpd.read_file(NE_LAND)
 
-    xmin = min(rast['x'])
-    xmax = max(rast['x'])
-    ymin = min(rast['y'])
-    ymax = max(rast['y'])
-    aspect = len(rast['x']) / len(rast['y'])
+    # Extent of the UK
+    xmin = -7
+    xmax = 2
+    ymin = 49.5
+    ymax = 59.5
+    aspect = (xmax-xmin) / (ymax-ymin)
     fig_width = 5
     fig = plt.figure(figsize=(fig_width, fig_width*aspect))
-    ax_p = fig.gca(projection=crs,
+    ax_p = fig.gca(projection=display_crs,
                    aspect=aspect)
     ticks = [0,1,2]
-    rast.plot(ax=ax_p, transform=crs, cmap=plt.get_cmap('Reds', 3), robust=False,
-              cbar_kwargs=dict(orientation='horizontal', label='# MIDAS stations per ERA5 cell',
-                               ticks=ticks, fraction=0.04, pad=0.08, aspect=6),
-              vmin=min(ticks)-0.5, vmax=max(ticks)+.5)
-    # midas.plot(ax=ax_p, color=C_PRIMARY_1, marker='x', markersize=10,
-    #            linewidth=1, label='MIDAS station')
-    ne_land.plot(ax=ax_p, color='', edgecolor='0.2',
-                 linewidth=0.4, alpha=0.4)
 
-    ax_p.set_extent([xmin, xmax, ymin, ymax], crs=crs)
-    gl = ax_p.gridlines(crs=crs, linewidth=.3,
-                        # linestyle='dashed',  dashes=(10,20),
+    ne_land.plot(ax=ax_p, color='', edgecolor='0.2',
+                 linewidth=0.4, alpha=0.4, transform=source_crs)
+    midas.plot(ax=ax_p, color='k', marker='x', markersize=15,
+               linewidth=1.5, label='MIDAS station', transform=source_crs)
+
+    ax_p.set_extent([xmin, xmax, ymin, ymax], crs=source_crs)
+    gl = ax_p.gridlines(crs=source_crs, linewidth=.3,
                         alpha=0.4,
-                        draw_labels=True,
-                        xlocs=np.arange(-10, 10, 2),
-                        ylocs=np.arange(40, 70, 2),
                         )
-    gl.xlabels_top = False
-    gl.ylabels_right = False
-    gl.xformatter = LONGITUDE_FORMATTER
-    gl.yformatter = LATITUDE_FORMATTER
-    # handles, labels = ax_p.get_legend_handles_labels()
-    # fig.legend(handles, labels, loc='lower right', ncol=2)
-    # plt.tight_layout()
+
     fig_path = os.path.join(PLOT_DIR, fig_name)
     plt.savefig(fig_path)
     subprocess.call(['pdfcrop', '--margins', '10', fig_path, fig_path])
     plt.close()
 
 
-def hexbin(ds, var1, var2, xlabel, ylabel, fig_name):
-    x = ds[var1].values.flat
-    y = ds[var2].values.flat
+def hexbin(da1, da2, xlabel, ylabel, fig_name):
+    x = da1.values.flat
+    y = da2.values.flat
     xq = np.nanquantile(x, [0.01, 0.99])
     yq = np.nanquantile(y, [0.01, 0.99])
     xmin, xmax = xq[0], xq[1]
@@ -596,7 +580,7 @@ def hexbin(ds, var1, var2, xlabel, ylabel, fig_name):
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.plot([xmin, xmax], [ymin, ymax], color='k', linewidth=0.5)
-    norm = matplotlib.colors.Normalize(vmin=1000, vmax=12000)
+    norm = matplotlib.colors.Normalize(vmin=1000, vmax=10000)
     cb = plt.colorbar(hb, spacing='uniform', orientation='vertical',
                       label='Number of cells', norm=norm, extend='both')
     # cb.set_label('# of cells')
@@ -626,20 +610,21 @@ def fig_map_KS(ds):
     alpha = 0.05
     DURATION = 2
     Dcrit = ds['Dcrit'].sel(significance_level=alpha).values
+    Dmean = ds['KS_D'].mean(dim='duration')
 
-    for ev_name in ds['ev_fit'].values:
-        da_sel = ds['KS_D'].sel(ev_fit=ev_name)
-        D_mean = da_sel.mean(dim='duration')
-        print(D_mean.where(D_mean > Dcrit).count(dim=['latitude', 'longitude']).mean().compute())
-        # print(da_sel)
-        ev_name = ev_name.decode('utf8')
-        single_map(D_mean,
-                   title='Lilliefors test statistic (1979-2017, mean on $d$, {}, $\\alpha=${})'.format(
-                       ev_name, alpha),
-                   cbar_label='$D$',
-                   center=Dcrit,
-                   reverse=True,
-                   fig_name='D_1979-2017_{}_dmean_{}.png'.format(alpha, ev_name))
+    single_map(Dmean,
+        title='Lilliefors test statistic (1979-2018, mean on $d$, $\\alpha=${})'.format(alpha),
+        cbar_label='$D$',
+        center=Dcrit,
+        reverse=True,
+        fig_name='D_1979-2018_{}_dmean.png'.format(alpha))
+
+    # single_map(ds['KS_D'].sel(duration=24),
+    #     title='Lilliefors test statistic (1979-2018, $d=24$, $\\alpha=${})'.format(alpha),
+    #     cbar_label='$D$',
+    #     center=Dcrit,
+    #     reverse=True,
+    #     fig_name='D_1979-2018_{}_d24.png'.format(alpha))
 
 
 def table_anderson_quantiles(ds, dim):
@@ -882,8 +867,9 @@ def fig_scaling_gradients_ratio_maps(ds):
 
 
 def fig_scaling_hexbin(ds):
-    hexbin(ds.sel(scaling_extent=b'all'),
-           'location_line_slope', 'scale_line_slope',
+    da1 = ds['gev_scaling'].sel(scaling_param='slope', ci='value', ev_param='location')
+    da2 = ds['gev_scaling'].sel(scaling_param='slope', ci='value', ev_param='scale')
+    hexbin(da1, da2,
            '$\\alpha$', '$\\beta$',
            'scaling_gradients_hexbin.png')
 
@@ -896,13 +882,6 @@ def table_count_nogumbelfit(ds):
 def table_count_noscalingfit(ds):
     num_null = np.isnan(ds[['location_line_slope', 'scale_line_slope']]).sum(dim=['latitude', 'longitude'])
     print(num_null.load())
-
-
-def station_permut(ds):
-    stations = ds['station'].values
-    combinations = list(itertools.combinations(stations, 2))
-    print(combinations[:100])
-    print(len(combinations))
 
 
 def prepare_midas_mean(ds_era, ds_midas, ds_midas_mean):
@@ -1074,11 +1053,6 @@ def fig_midas_mean(ds_pairs, fig_name):
     plt.close()
 
 
-def gumbel_intensity(loc, scale, T):
-    i = loc - scale * np.log(-np.log(1 - 1 / T))
-    return i
-
-
 def scatter_intensity(ds_era, ds_gauges):
     """
     """
@@ -1102,14 +1076,14 @@ def scatter_intensity(ds_era, ds_gauges):
         ds.coords['source'] = [name]
         ds_list.append(ds)
     ds = xr.merge(ds_list)
-    # print(ds)
 
     # calculate intensity for given duration
     da_list = []
     for T in [2,10,50,100,500,1000]:
-        intensity = gumbel_intensity(ds['location'],
-                                     ds['scale'],
-                                     T).rename('intensity')
+        loc = ds['gev'].sel(ev_param='location')
+        scale = ds['gev'].sel(ev_param='scale')
+        shape = ds['gev'].sel(ev_param='shape')
+        intensity = ev_fit.gev_quantile(T, loc, scale, shape).rename('intensity')
         intensity = intensity.expand_dims('T')
         intensity.coords['T'] = [T]
         da_list.append(intensity)
@@ -1118,34 +1092,13 @@ def scatter_intensity(ds_era, ds_gauges):
     print(df_i.head())
 
 
-def a2_map(a2_values, years):
-    print(a2_values)
-    # get critical values
-    _, critical_values, significance_levels = scipy.stats.anderson(years, dist='gumbel_r')
-    da_crit = xr.DataArray(critical_values, name='A2_crit',
-                           coords=[significance_levels],
-                           dims=['significance_level'])
-    print(da_crit)
-    a2_crit = da_crit.sel(significance_level=5).values
-    single_map(a2_values['A2'],
-               title='Anderson-Darling $A^2$ for d=24h, 1979-2017',
-               cbar_label='$A^2$',
-               center=a2_crit,
-               reverse=True,
-               fig_name='A2_1979-2017_5pct_24h.png')
-
-
 def main():
-    ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_ANNUAL_FILE))#.sel(ev_fit='gev_pwm', drop=True)
-    ds_midas = xr.open_dataset(MIDAS_ANNUAL_FILE).sel(gumbel_fit='scipy', drop=True)
-    # ds_midas_pairs = xr.open_dataset(MIDAS_PAIRS).sel(gumbel_fit='scipy', drop=True)
-    # print(ds_era['shape'].sel(duration=24).load().quantile([0.05, 0.95]))
-    # print(ds_era['shape'].sel(duration=24).mean().load())
-    # print(ds_midas['longitude'].load())
-    # station_permut(ds_midas)
+    ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
+    ds_midas = xr.open_zarr(MIDAS_AMS_FILE)
+
+    print(ds_era)
 
     # fig_map_KS(ds_era)
-    # print(ds_era['shape'].sel(ev_fit=b'gev_pwm').mean().compute())
 
     # fig_map_anderson(ds_era)
     # table_anderson_quantiles(ds_midas, dim=None)
@@ -1162,7 +1115,7 @@ def main():
     # fig_scaling_differences_all(ds_era, ds_midas)
     # fig_maps_r(ds_era)
     # fig_scaling_ratio_map(ds_era)
-    # fig_scaling_hexbin(ds_era)
+    fig_scaling_hexbin(ds_era)
 
     # ds_pairs = prepare_midas_mean(ds_era, ds_midas, ds_midas_pairs)
     # fig_midas_mean(ds_pairs, 'midas_mean.pdf')
@@ -1188,7 +1141,7 @@ def main():
     # plot_gauges_data(ds_ghcn, 2000, 2012 'gauges.png')
 
     # print((~np.isfinite(ds)).sum().compute())
-    probability_plot(ds_era, STUDY_SITES, 'sites_probability.pdf')
+    # probability_plot(ds_era, STUDY_SITES, 'sites_probability.pdf')
     # use_stations = [b'BRIZE NORTON', b'LITTLE RISSINGTON',
     #                 b'LARKHILL', b'BOSCOMBE DOWN']
     # ds_points = {'MIDAS': (ds_midas.sel(scaling_extent='daily'), 'src_name')}
@@ -1199,8 +1152,7 @@ def main():
     # plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017-11sites.pdf')
 
     ##############
-    # scatter_intensity(ds_era.sel(scaling_extent=b'all', drop=True),
-    #                   ds_midas.sel(scaling_extent='all', drop=True))
+    # scatter_intensity(ds_era, ds_midas)
 
     # a2_values = xr.open_dataset(os.path.join(DATA_DIR, '../data/era5_1979-2017_precip_a2_24.nc'))
     # a2_map(a2_values, ds_era['year'])
@@ -1210,30 +1162,41 @@ def main():
     #            cbar_label='Pearson correlation coefficient',
     #            fig_name='pearsonr.png')
 
-    # single_map(ds_era['Z_stat'].sel(duration=24),
-    #         title="Is $\kappa = 0$?",
-    #         cbar_label="Z",
-    #         center=0,
-    #         reverse=True,
-    #         fig_name='Z_stat_24h.png')
+    # single_map(ds_era['gev'].sel(duration=24, ci='value', ev_param='location'),
+    #         title="GEV location",
+    #         cbar_label="$\psi$",
+    #         # center=0,
+    #         # reverse=True,
+    #         fig_name='1979-2018_location_24h.png')
 
-    # single_map(ds_era['Z_stat'].sel(duration=1),
-    #            title="Is $\kappa = 0$?",
-    #            cbar_label="Z",
-    #            center=0,
-    #            reverse=True,
-    #            fig_name='Z_stat_1h.png')
+    # single_map(ds_era['gev'].sel(duration=24, ci='value', ev_param='scale'),
+    #         title="GEV scale",
+    #         cbar_label="$\lambda$",
+    #         # center=0,
+    #         # reverse=True,
+    #         fig_name='1979-2018_scale_24h.png')
 
-    # single_map(ds_era['Z_stat'].mean(dim='duration'),
-    #            title="Is $\kappa = 0$?",
-    #            cbar_label="Z",
-    #            center=0,
-    #            reverse=True,
-    #            fig_name='Z_stat_mean.png')
+    # single_map(ds_era['gev'].sel(duration=24, ci='value', ev_param='shape'),
+    #         title="GEV shape",
+    #         cbar_label="$\kappa$",
+    #         # center=0,
+    #         # reverse=True,
+    #         fig_name='1979-2018_shape_24h.png')
 
-    # multi_maps(ds_era, ['ks_loaiciga', 'ks_moments'],
-    #            ['Fitting accuracy of the iterative method (d=24h)', 'Fitting accuracy of the method of moments (d=24h)'],
-    #            "Kolmogorov-Smirnov's D", 'fitting_accuracy.png', sqr=False)
+    # single_map(ds_era['gev_scaling'].sel(ci='value', ev_param='location', scaling_param='slope'),
+    #         title="GEV scale slope",
+    #         cbar_label="$slope$",
+    #         # center=0,
+    #         # reverse=True,
+    #         fig_name='1979-2018_scale_slope.png')
+
+    # single_map(ds_era['ecdf_goda'].mean(dim=(['duration', 'year'])),
+    #         title="ECDF mean",
+    #         cbar_label="p",
+    #         # center=0,
+    #         # reverse=True,
+    #         fig_name='1979-2018_ecdf_mean.png')
+
 
     # hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
     # hourly = xr.open_zarr(hourly_path)
