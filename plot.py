@@ -90,23 +90,23 @@ def single_map(da, cbar_label, title, fig_name, center=None, reverse=False):
     plt.close()
 
 
-def multi_maps(ds, var_names, disp_names, value_name, fig_name, duration=24, sqr=False, center=None, reverse=False):
-    crs = ctpy.crs.EqualEarth()()
-    sel = ds.loc[{'duration': duration}]
+def multi_maps(da_list, disp_names, value_name, fig_name, sqr=False, center=None, reverse=False):
+    crs = ctpy.crs.EqualEarth()
     # reshape variables as dimension
-    da_list = []
-    for var_name in var_names:
+    da_list2 = []
+    for da in da_list:
         if sqr == True:
-            da_sel = np.square(sel[var_name]).expand_dims('param')
+            da_sel = np.square(da).expand_dims('param')
         else:
-            da_sel = sel[var_name].expand_dims('param')
-        da_sel.coords['param'] = [var_name]
-        da_list.append(da_sel)
-    da = xr.concat(da_list, 'param')
+            da_sel = da.expand_dims('param')
+        da_sel.coords['param'] = [da.name]
+        da_list2.append(da_sel)
+    da = xr.concat(da_list2, 'param')
     da.attrs['long_name'] = value_name  # Color bar title
-
+    print(da)
     # Actual plot
-    aspect = ds.dims['longitude'] / ds.dims['latitude']
+    # print(da['longitude'])
+    aspect = len(da['longitude']) / len(da['latitude'])
     if center:
         if reverse:
             cmap = 'RdBu_r'
@@ -317,7 +317,7 @@ def plot_scaling_per_site(ds, fig_name):
 
     # Draw map
     ax_map = fig.add_subplot(row_num, col_num, ax_num,
-                             projection=ctpy.crs.EqualEarth()(),
+                             projection=ctpy.crs.EqualEarth(),
                              aspect='auto')
     plot_point_map(ds, ax_map)
     ax_num += 1
@@ -515,7 +515,7 @@ def plot_gauges_map_from_ds(ds, id_dim, fig_name, global_extent=True):
     # Plot the gauges on a world map
     plt.figure(figsize=(12, 12))
     if global_extent:
-        ax_p = plt.gca(projection=ctpy.crs.EqualEarth()(), aspect='auto')
+        ax_p = plt.gca(projection=ctpy.crs.EqualEarth(), aspect='auto')
         ax_p.set_global()
     else:
         ax_p = plt.gca(projection=ctpy.crs.PlateCarree(), aspect='auto')
@@ -589,21 +589,6 @@ def hexbin(da1, da2, xlabel, ylabel, fig_name):
     plt.close()
 
 
-def fig_map_anderson(ds):
-    """create a map of the Anderson-Darling A^2 for Gumbel
-    """
-    # print(ds)
-    # a2_mean = ds['A2'].mean(dim='duration')
-    a2_crit = ds['A2_crit'].sel(significance_level=1).values
-    # print(ds['A2'].where(ds['A2'] > a2_crit).count(dim=['latitude', 'longitude']).mean().compute())
-    single_map(ds['A2'].sel(duration=24),
-               title='Anderson-Darling $A^2$ for d=24h, 2000-2017',
-               cbar_label='$A^2$',
-               center=a2_crit,
-               reverse=True,
-               fig_name='A2_2000-2017_1pct_24h.png')
-
-
 def fig_map_KS(ds):
     """create maps of the Kolmogorov-Smirnov / Lilliefors test statistic
     """
@@ -611,7 +596,6 @@ def fig_map_KS(ds):
     DURATION = 2
     Dcrit = ds['Dcrit'].sel(significance_level=alpha).values
     Dmean = ds['KS_D'].mean(dim='duration')
-
     single_map(Dmean,
         title='Lilliefors test statistic (1979-2018, mean on $d$, $\\alpha=${})'.format(alpha),
         cbar_label='$D$',
@@ -619,54 +603,13 @@ def fig_map_KS(ds):
         reverse=True,
         fig_name='D_1979-2018_{}_dmean.png'.format(alpha))
 
-    # single_map(ds['KS_D'].sel(duration=24),
-    #     title='Lilliefors test statistic (1979-2018, $d=24$, $\\alpha=${})'.format(alpha),
-    #     cbar_label='$D$',
-    #     center=Dcrit,
-    #     reverse=True,
-    #     fig_name='D_1979-2018_{}_d24.png'.format(alpha))
-
-
-def table_anderson_quantiles(ds, dim):
-    # print(ds['scaling_extent'].load())
-    q = ds['A2'].load().quantile([0.01, 0.5, 0.95, 0.99], dim=dim)
-    # print(q)
-    a2_mean = ds['A2'].mean(dim='duration')
-    print(a2_mean)
-    sig = ds['A2_crit'].sel(significance_level=5)
-    print(sig)
-    print(a2_mean.where(a2_mean <= sig, drop=True))
-    # print(ds['A2_crit'])
-
-
-def fig_maps_gumbel24h(ds):
-        multi_maps(ds, ['location', 'scale'],
-                ['Location $\mu$', 'Scale $\sigma$'],
-                'Parameter value', 'gumbel_params_24h_2000-2017.png')
-
-
-def fig_maps_gumbel1h(ds):
-        multi_maps(ds, ['location', 'scale'],
-                   ['Location $\mu$', 'Scale $\sigma$'],
-                   'Parameter value', 'gumbel_params_1h_2000-2017.png',
-                   duration=1)
-
 
 def fig_maps_gev24h(ds):
-        multi_maps(ds, ['location', 'scale', 'shape'],
-                   ['Location $\mu$', 'Scale $\sigma$', 'Shape $\kappa$'],
-                    'Parameter value', 'gev_params_24h_1979-2017.png')
-
-
-def fig_map_shape(ds):
-    """
-    """
-    single_map(ds['shape'].sel(duration=24),
-               title='GEV shape $\kappa$ for d=24h, 1979-2017',
-               cbar_label='$\kappa$',
-               center=0,
-               reverse=True,
-               fig_name='gev_shape_1979-2017_24h_100.png')
+    da_loc = ds['gev'].sel(ci='value', duration=24, ev_param='location').rename('location')
+    da_scale = ds['gev'].sel(ci='value', duration=24, ev_param='scale').rename('scale')
+    multi_maps([da_loc, da_scale],
+                ['Location $\psi$', 'Scale $\lambda$'],
+                'Parameter value', 'gev_params_24h_1979-2018.png')
 
 
 def table_rsquared_quantiles(ds, dim):
@@ -874,13 +817,15 @@ def fig_scaling_hexbin(ds):
            'scaling_gradients_hexbin.png')
 
 
-def table_count_nogumbelfit(ds):
-    num_null = (~np.isfinite(ds['location'])).sum(dim=['latitude', 'longitude'])
+def table_count_noGEVfit(ds):
+    da_loc = ds['gev'].sel(ci='value', ev_param='location')
+    num_null = (~np.isfinite(da_loc)).sum(dim=['latitude', 'longitude'])
     print(num_null.load())
 
 
 def table_count_noscalingfit(ds):
-    num_null = np.isnan(ds[['location_line_slope', 'scale_line_slope']]).sum(dim=['latitude', 'longitude'])
+    da_scaling_slope = ds['gev_scaling'].sel(ci='value', ev_param=['location', 'scale'], scaling_param='slope')
+    num_null = np.isnan(da_scaling_slope).sum(dim=['latitude', 'longitude'])
     print(num_null.load())
 
 
@@ -1101,12 +1046,9 @@ def main():
     # fig_map_KS(ds_era)
 
     # fig_map_anderson(ds_era)
-    # table_anderson_quantiles(ds_midas, dim=None)
-    # fig_maps_gumbel24h(ds_era)
-    # fig_maps_gumbel1h(ds_era)
-    # fig_map_shape(ds_era)
-    # table_count_nogumbelfit(ds_era)
-    # table_count_noscalingfit(ds_era)
+    # fig_maps_gev24h(ds_era)
+    table_count_noGEVfit(ds_era)
+    table_count_noscalingfit(ds_era)
     # table_r_quantiles(ds_era, dim=['longitude', 'latitude'])
     # table_r_sigcount(ds_era, 0.05, dim=['longitude', 'latitude'])
     # table_r_sigcount(ds_era, 0.01, dim=['longitude', 'latitude'])
@@ -1115,110 +1057,25 @@ def main():
     # fig_scaling_differences_all(ds_era, ds_midas)
     # fig_maps_r(ds_era)
     # fig_scaling_ratio_map(ds_era)
-    fig_scaling_hexbin(ds_era)
+    # fig_scaling_hexbin(ds_era)
 
     # ds_pairs = prepare_midas_mean(ds_era, ds_midas, ds_midas_pairs)
     # fig_midas_mean(ds_pairs, 'midas_mean.pdf')
 
     # fig_gauges_map('midas_gauges_map.pdf')
 
-    # fig_map_anderson(ds_era)
-    # ds_ghcn = xr.open_dataset(GHCN_ANNUAL_FILE)
-    # print(ds_ghcn)
-    # print(ds_ghcn)
-    # print(ds_annual_midas)
-    # print(ds_annual_midas['location_line_rvalue'].load())
-    # print(ds_annual_midas['A2'].load())
-    # print(ds_annual_midas['A2'].load().quantile([0.50, 0.8, 0.9, 0.95,0.99,0.999]))
-
-
-
-    # ds_annual_ghcn = xr.open_zarr(GAUGES_ANNUAL_FILE)
-    # print(ds_annual_gauges.load())
-    # print(ds_annual_midas.load())
-    # plot_gauges_map_from_ds(ds_annual_midas, 'src_name', 'midas_gauges_map.pdf', global_extent=False)
-    # plot_gauges_map_from_ds(ds_ghcn, 'name', 'ghcn_gauges_map.pdf', global_extent=True)
-    # plot_gauges_data(ds_ghcn, 2000, 2012 'gauges.png')
-
-    # print((~np.isfinite(ds)).sum().compute())
-    # probability_plot(ds_era, STUDY_SITES, 'sites_probability.pdf')
-    # use_stations = [b'BRIZE NORTON', b'LITTLE RISSINGTON',
-    #                 b'LARKHILL', b'BOSCOMBE DOWN']
-    # ds_points = {'MIDAS': (ds_midas.sel(scaling_extent='daily'), 'src_name')}
-    # sites_list = get_site_list(ds_midas, 'src_name', use_only=use_stations)
-
-    # ds_cont = {'ERA5': ds_era.sel(scaling_extent=[b'daily', b'all'])}
-    # ds = combine_ds_per_site(STUDY_SITES, ds_cont=ds_cont)
     # plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017-11sites.pdf')
 
     ##############
     # scatter_intensity(ds_era, ds_midas)
 
-    # a2_values = xr.open_dataset(os.path.join(DATA_DIR, '../data/era5_1979-2017_precip_a2_24.nc'))
-    # a2_map(a2_values, ds_era['year'])
 
     # single_map(ds_era['scaling_pearsonr'],
     #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
     #            cbar_label='Pearson correlation coefficient',
     #            fig_name='pearsonr.png')
 
-    # single_map(ds_era['gev'].sel(duration=24, ci='value', ev_param='location'),
-    #         title="GEV location",
-    #         cbar_label="$\psi$",
-    #         # center=0,
-    #         # reverse=True,
-    #         fig_name='1979-2018_location_24h.png')
 
-    # single_map(ds_era['gev'].sel(duration=24, ci='value', ev_param='scale'),
-    #         title="GEV scale",
-    #         cbar_label="$\lambda$",
-    #         # center=0,
-    #         # reverse=True,
-    #         fig_name='1979-2018_scale_24h.png')
-
-    # single_map(ds_era['gev'].sel(duration=24, ci='value', ev_param='shape'),
-    #         title="GEV shape",
-    #         cbar_label="$\kappa$",
-    #         # center=0,
-    #         # reverse=True,
-    #         fig_name='1979-2018_shape_24h.png')
-
-    # single_map(ds_era['gev_scaling'].sel(ci='value', ev_param='location', scaling_param='slope'),
-    #         title="GEV scale slope",
-    #         cbar_label="$slope$",
-    #         # center=0,
-    #         # reverse=True,
-    #         fig_name='1979-2018_scale_slope.png')
-
-    # single_map(ds_era['ecdf_goda'].mean(dim=(['duration', 'year'])),
-    #         title="ECDF mean",
-    #         cbar_label="p",
-    #         # center=0,
-    #         # reverse=True,
-    #         fig_name='1979-2018_ecdf_mean.png')
-
-
-    # hourly_path = os.path.join(DATA_DIR, HOURLY_FILE)
-    # hourly = xr.open_zarr(hourly_path)
-    # plot_hourly(hourly, STUDY_SITES, 'hourly.png')
-
-    # hourly maxima
-    # hourly_max = hourly['precipitation'].max('time')
-    # print(hourly_max)
-    # single_map(hourly_max,
-    #            title="Max hourly precipitation 2000-2012 (ERA5)",
-    #            cbar_label='Precipitation rate (mm/hr)',
-    #            fig_name='hourly_max.png')
-
-    # ds_midas = xr.open_zarr('/home/lunet/gylc4/geodata/MIDAS/midas_precip_1950-2017.zarr')
-    # ds_midas.coords['station'] = ds_midas['src_name']
-    # print(ds_midas)
-    # da_larkhill = ds_midas['ob_hour_count'].sel(station='LARKHILL', end_time=slice(str(2000), str(2017)))
-    # da_larkhill.plot()
-    # plt.savefig('larkhill.pdf')
-    # plt.close()
-    # block_one = ['BRIZE NORTON', 'LITTLE RISSINGTON']
-    # block_two = ['LARKHILL', 'BOSCOMBE DOWN']
 
 if __name__ == "__main__":
     sys.exit(main())
