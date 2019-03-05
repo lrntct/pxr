@@ -21,12 +21,13 @@ import scipy.stats
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import matplotlib.pyplot as plt
 
-import ev_fit
+import ev_quantiles
+import helper
 
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
 # HOURLY_FILE = 'era5_2000-2012_precip.zarr'
-ERA_AMS_FILE = 'era5_1979-2018_ams_scaling2.zarr'
+ERA_AMS_FILE = 'era5_1979-2018_ams_scaling.zarr'
 MIDAS_AMS_FILE = '../data/MIDAS/midas_1979-2018_ams_scaling.zarr'
 PLOT_DIR = '../plot'
 
@@ -606,8 +607,8 @@ def fig_map_KS(ds):
 
 
 def fig_maps_gev24h(ds):
-    da_loc = ds['gev'].sel(ci='value', duration=24, ev_param='location').rename('location')
-    da_scale = ds['gev'].sel(ci='value', duration=24, ev_param='scale').rename('scale')
+    da_loc = ds['gev'].sel(ci='estimate', duration=24, ev_param='location').rename('location')
+    da_scale = ds['gev'].sel(ci='estimate', duration=24, ev_param='scale').rename('scale')
     multi_maps([da_loc, da_scale],
                 ['Location $\psi$', 'Scale $\lambda$'],
                 'Parameter value', 'gev_params_24h_1979-2018.png')
@@ -650,7 +651,7 @@ def get_quantile_dict(quantiles, **kwargs):
     return df_dict
 
 
-def fig_scaling_differences_all(ds_era, ds_midas):
+def fig_scaling_differences_all(ds_era, ds_midas, fig_name):
     quantiles = [0.01, 0.5, 0.99]
 
     ds_era_sel = ds_era.sel(latitude=ds_midas['latitude'],
@@ -675,7 +676,6 @@ def fig_scaling_differences_all(ds_era, ds_midas):
                            'param':param,
                            'df_list':df_list})
 
-    fig_name = 'scaling_diff.pdf'
     col_num = len(q_extent_dict)
     row_num = 2
     fig, axes = plt.subplots(row_num, col_num, figsize=(6, 3),
@@ -789,8 +789,8 @@ def fig_scaling_gradients_ratio_maps(ds):
 
 
 def fig_scaling_hexbin(ds):
-    da1 = ds['gev_scaling'].sel(scaling_param='slope', ci='value', ev_param='location')
-    da2 = ds['gev_scaling'].sel(scaling_param='slope', ci='value', ev_param='scale')
+    da1 = ds['gev_scaling'].sel(scaling_param='slope', ci='estimate', ev_param='location')
+    da2 = ds['gev_scaling'].sel(scaling_param='slope', ci='estimate', ev_param='scale')
     hexbin(da1, da2,
            '$\\alpha$', '$\\beta$',
            'scaling_gradients_hexbin.png')
@@ -805,19 +805,19 @@ def table_r_sigcount(ds, alpha, dim):
 
 
 def table_count_noGEVfit(ds):
-    da_loc = ds['gev'].sel(ci='value', ev_param='location')
+    da_loc = ds['gev'].sel(ci='estimate', ev_param='location')
     num_null = (~np.isfinite(da_loc)).sum(dim=['latitude', 'longitude'])
     print(num_null.load())
 
 
 def table_count_noscalingfit(ds):
-    da_scaling_slope = ds['gev_scaling'].sel(ci='value', ev_param=['location', 'scale'], scaling_param='slope')
+    da_scaling_slope = ds['gev_scaling'].sel(ci='estimate', ev_param=['location', 'scale'], scaling_param='slope')
     num_null = np.isnan(da_scaling_slope).sum(dim=['latitude', 'longitude'])
     print(num_null.load())
 
 
 def table_rsquared_quantiles(ds, dim):
-    ds_rsquared = ds['gev_scaling'].sel(ci='value', ev_param=['location', 'scale'], scaling_param='rsquared')
+    ds_rsquared = ds['gev_scaling'].sel(ci='estimate', ev_param=['location', 'scale'], scaling_param='rsquared')
     q =  ds_rsquared.load().quantile([0.01, 0.05], dim=dim)
     print(q)
 
@@ -998,7 +998,7 @@ def fig_midas_mean(ds_pairs, fig_name):
     plt.close()
 
 
-def scatter_intensity(ds_era, ds_gauges):
+def scatter_intensity(ds_era, ds_gauges, fig_name):
     """
     """
     # change era's longitude to be the same as midas gauges
@@ -1007,34 +1007,72 @@ def scatter_intensity(ds_era, ds_gauges):
     ds_gauges = ds_gauges.reset_coords(['latitude', 'longitude'])
     gauges_sel = np.logical_and(np.isfinite(ds_gauges['latitude']), np.isfinite(ds_gauges['longitude']))
     ds_gauges = ds_gauges.where(gauges_sel, drop=True)
-    # print(ds_gauges)
     # Select the cells above the stations
     ds_era_sel = ds_era.sel(latitude=ds_gauges['latitude'],
                             longitude=ds_gauges['longitude'],
                             method='nearest')
     ds_list = []
-    for ds, name in zip([ds_era_sel, ds_gauges], ['era5', 'midas']):
+    for ds, name in zip([ds_era_sel, ds_gauges], ['ERA5', 'MIDAS']):
         # Delete coordinates (no longer used)
-        ds.drop(['latitude', 'longitude'])
+        ds = ds.drop(['latitude', 'longitude', 'src_name'])
         # Merge the two datasets along a new dimension
-        ds = ds_era_sel.expand_dims('source')
+        ds = ds.expand_dims('source')
         ds.coords['source'] = [name]
         ds_list.append(ds)
     ds = xr.merge(ds_list)
 
-    # calculate intensity for given duration
+    # GEV param from scaling
+    sel_dict = dict(source='ERA5', ev_param=['location', 'scale'])
+    slope = ds['gev_scaling'].sel(scaling_param='slope', **sel_dict)
+    intercept = ds['gev_scaling'].sel(scaling_param='slope', **sel_dict)
+    params_from_scaling = (10**intercept) * ds['duration']**slope
+    params_from_scaling = params_from_scaling.expand_dims('source').drop('scaling_param')
+    params_from_scaling.coords['source'] = ['ERA5_scaled']
+    # Add non-scaled shape.
+    # print(params_from_scaling)
+    da_shape =  ds['gev'].sel(source='ERA5', ev_param='shape')
+    da_shape = da_shape.expand_dims(['source', 'ev_param'])
+    da_shape.coords['source'] = ['ERA5_scaled']
+    da_shape.coords['ev_param'] = ['shape']
+    # print(da_shape)
+    params_from_scaling = xr.concat([params_from_scaling, da_shape], dim='ev_param')
+    # print(params_from_scaling)
+    gev_params = xr.concat([params_from_scaling, ds['gev']], dim='source')
+
+    # ams_sel = ds['annual_max'].sel(duration=24, year=2000, station=23).load()
+    # print(ams_sel)
+    # calculate intensity for given duration and return period
     da_list = []
     for T in [2,10,50,100,500,1000]:
-        loc = ds['gev'].sel(ev_param='location')
-        scale = ds['gev'].sel(ev_param='scale')
-        shape = ds['gev'].sel(ev_param='shape')
-        intensity = ev_fit.gev_quantile(T, loc, scale, shape).rename('intensity')
+        loc = gev_params.sel(ev_param='location', ci='estimate')
+        scale = gev_params.sel(ev_param='scale', ci='estimate')
+        shape = gev_params.sel(ev_param='shape', ci='estimate')
+        intensity = ev_quantiles.gev_quantile(T, loc, scale, shape).rename('intensity')
         intensity = intensity.expand_dims('T')
         intensity.coords['T'] = [T]
         da_list.append(intensity)
-    da_i = xr.concat(da_list, dim='T').drop(['latitude', 'longitude', 'src_name'])
-    df_i = da_i.to_dataframe().reset_index()
-    print(df_i.head())
+    da_i = xr.concat(da_list, dim='T').drop(['ci'])
+    # print(da_i.sel(source='MIDAS'))
+    # Regression line between ERA5 and MIDAS
+    slope, intercept, rsquared = helper.OLS_xr(da_i.sel(source='MIDAS'), da_i.sel(source='ERA5'), dim='station')
+    # print(rsquared.load())
+    df_i = da_i.to_dataframe()
+    # Split intensities in two columns, one for each source
+    da_list = []
+    for source in ['MIDAS', 'ERA5', 'ERA5_scaled']:
+        series_i = df_i.xs(source, level='source').rename(columns={'intensity':source})
+        # print(series_i.head())
+        da_list.append(series_i)
+    df_i_s = pd.concat(da_list, axis='columns').reset_index()
+
+    # Plot some durations on facetgrid
+    dur_sel = [1,6,24,240]
+    df_i_s = df_i_s.loc[np.in1d(df_i_s['duration'], dur_sel)]
+    print(df_i_s.head())
+    fg = sns.FacetGrid(df_i_s, sharex=False, sharey=False, row='T', col='duration')
+    fg = fg.map(sns.regplot, 'MIDAS', 'ERA5',  ci=None)
+    fg = fg.map(sns.regplot, 'MIDAS', 'ERA5_scaled',  ci=None, color='r')
+    plt.savefig(os.path.join(PLOT_DIR, fig_name))
 
 
 def main():
@@ -1043,7 +1081,7 @@ def main():
 
     print(ds_era)
 
-    fig_map_KS(ds_era)
+    # fig_map_KS(ds_era)
 
     # fig_map_anderson(ds_era)
     # fig_maps_gev24h(ds_era)
@@ -1054,7 +1092,7 @@ def main():
 
     # fig_scaling_gradients_maps(ds_era)
     # fig_scaling_gradients_ratio_maps(ds_era)
-    # fig_scaling_differences_all(ds_era, ds_midas)
+    # fig_scaling_differences_all(ds_era, ds_midas, 'scaling_diff.pdf')
     # fig_maps_r(ds_era)
     # fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)
@@ -1064,10 +1102,10 @@ def main():
 
     # fig_gauges_map('midas_gauges_map.pdf')
 
-    # plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017-11sites.pdf')
+    plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017-11sites.pdf')
 
     ##############
-    # scatter_intensity(ds_era, ds_midas)
+    # scatter_intensity(ds_era, ds_midas, 'scatter_intensity.pdf')
 
 
     # single_map(ds_era['scaling_pearsonr'],
