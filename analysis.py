@@ -53,7 +53,7 @@ DTYPE = 'float32'
 
 HOURLY_CHUNKS = {'time': -1, 'latitude': 16, 'longitude': 16}
 # 4 cells: 1 degree
-ERA5_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 30*4, 'longitude': 30*4}
+ERA5_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 20*4, 'longitude': 20*4}
 # When resolution is 1 degree
 ANNUAL_CHUNKS_1DEG = {'year': -1, 'duration': -1, 'latitude': 30, 'longitude': 30}
 EXTRACT_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 30, 'longitude': 30}
@@ -113,14 +113,14 @@ def step22_rank_ecdf(ds_ams, chunks):
     ds = xr.merge([da_ams, da_ranks]).chunk(chunks)
     # Empirical probability
     ds['ecdf'] = ev_fit.ecdf(da_ranks, n_obs)
-    return ds
+    return ds.chunk(chunks)
 
 
 def step23_fit_gev_with_ci(ds):
     """Estimate GEV parameters and their confidence intervals.
     CI are estimated with the bootstrap method.
     """
-    ds['gev'] = ev_fit.fit_gev(ds, DTYPE, n_sample=10000, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
+    ds['gev'] = ev_fit.fit_gev(ds, DTYPE, n_sample=1000, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
     return ds
 
 
@@ -143,7 +143,7 @@ def step3_scaling_with_ci(ds):
     """Estimate linear regression and their confidence intervals.
     CI are estimated with the bootstrap method.
     """
-    ds['gev_scaling'] = scaling.scaling_gev(ds, DTYPE, n_sample=10000, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
+    ds['gev_scaling'] = scaling.scaling_gev(ds, DTYPE, n_sample=1000, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
     return ds
 
 
@@ -198,32 +198,33 @@ def main():
         # print(ds_r)
 
 
-        # Rank # For unknown reason, Dask distributed create buggy ECDF.
+        ## Rank # For unknown reason Dask distributed create buggy ECDF.
         ams = xr.open_zarr(ams_path)
-        print(ams)
-        print('## Ranking ##')
-        ds_ranked = step22_rank_ecdf(ams, chunk_size)
-        to_zarr(ds_ranked, path_ranked)
+        # print(ams)
+        # print('## Rank: {} ##'.format(datetime.now()))
+        # ds_ranked = step22_rank_ecdf(ams, chunk_size)
+        # print(ds_ranked)
+        # to_zarr(ds_ranked, path_ranked)
 
-        # For the next steps, use dask distributed LocalCluster (uses processes instead of threads)
+        ## For the next steps, use dask distributed LocalCluster (uses processes instead of threads)
         cluster = LocalCluster(n_workers=32, threads_per_worker=1)
         print(cluster)
         client = Client(cluster)
 
-        # fit EV #
-        print('## Fit EV ##')
-        ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT]
-        ds_gev = step23_fit_gev_with_ci(ds_ranked)
-        to_zarr(ds_gev, path_gev)
+        ## fit EV ##
+        # print('## Fit EV: {} ##'.format(datetime.now()))
+        # ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT]
+        # ds_gev = step23_fit_gev_with_ci(ds_ranked)
+        # to_zarr(ds_gev, path_gev)
 
-        # GoF #
-        print('## Goodness of fit ##')
-        ds_gev = xr.open_zarr(path_gev)
-        ds_gof = step24_goodness_of_fit(ds_gev, chunk_size)
-        to_zarr(ds_gof, path_gof)
+        ## GoF ##
+        # print('## Goodness of fit: {} ##'.format(datetime.now()))
+        # ds_gev = xr.open_zarr(path_gev)
+        # ds_gof = step24_goodness_of_fit(ds_gev, chunk_size)
+        # to_zarr(ds_gof, path_gof)
 
-        # Scaling #
-        print('Scaling')
+        ## Scaling ##
+        print('## Scaling: {} ##'.format(datetime.now()))
         ds_gof = xr.open_zarr(path_gof)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
         ds_scaling = step3_scaling_with_ci(ds_gof)
         to_zarr(ds_scaling, path_scaling)
