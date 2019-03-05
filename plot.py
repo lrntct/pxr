@@ -61,7 +61,7 @@ C_SECONDARY_2 = '#89c653'
 def convert_lon(longitude):
     """convert negative longitude into 360 longitude
     """
-    if longitude < 0:
+    if np.any(longitude < 0):
         return longitude + 360
     else:
         return longitude
@@ -158,12 +158,7 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
     if not ds_cont and not ds_cont:
         raise ValueError('No Dataset provided')
 
-    scaling_coeffs = ['location_line_slope', 'scale_line_slope',
-                      'location_line_intercept', 'scale_line_intercept',
-                      'scaling_ratio']
-    keep_vars = ['location', 'scale'] + scaling_coeffs
-    # drop_coords = [#'latitude', 'longitude',
-    #                'gumbel_fit']
+    keep_vars = ['gev', 'gev_scaling']
 
     # Extract sites values from the datasets. combine all ds along a new 'source' dimension
     ds_site_list = []
@@ -178,7 +173,7 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
                                           method='nearest')
                                     # .drop(drop_coords)
                                     [keep_vars])
-                ds_cont_extract = ds_cont_extract.load().expand_dims(['station','source'])
+                ds_cont_extract = ds_cont_extract.expand_dims(['station','source'])
                 ds_cont_extract.coords['station'] = [site_name]
                 ds_cont_extract.coords['source'] = [ds_name]
                 ds_site_sources.append(ds_cont_extract)
@@ -187,7 +182,6 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
             for ds_name, (ds, name_col) in ds_points.items():
                 ds.coords['station'] = ds[name_col]
                 ds_pt_extract = (ds.sel(station=site_name)
-                                 .load()
                                  .drop(drop_coords + [name_col])
                                  [keep_vars])
                 ds_pt_extract.coords['station'] = [site_name]
@@ -200,19 +194,20 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
     # Concat all along the 'station' dimension
     ds_all = xr.concat(ds_site_list, dim='station')
     # Calculate regression lines
-    for p in ['location', 'scale']:
-        dur = ds_all['duration']
-        slope = ds_all['{}_line_slope'.format(p)]
-        intercept = ds_all['{}_line_intercept'.format(p)]
-        linereg_var = '{}_lr'.format(p)
-        ds_all[linereg_var] = (10**intercept) * dur**slope
-    # print(ds_all.sel(duration=2, station='Jakarta',
-    #                  scaling_extent=b'daily'))
+    sel_dict = dict(ev_param=['location', 'scale'])
+    slope = ds_all['gev_scaling'].sel(scaling_param='slope', **sel_dict)
+    intercept = ds_all['gev_scaling'].sel(scaling_param='intercept', **sel_dict)
+    params_from_scaling = (10**intercept) * ds_all['duration']**slope
+    # Add non-scaled shape
+    da_shape = ds_all['gev'].sel(ev_param='shape').expand_dims(['ev_param'])
+    da_shape.coords['ev_param'] = ['shape']
+    ds_all['gev_scaled'] = xr.concat([params_from_scaling, da_shape], dim='ev_param').transpose(*ds_all['gev'].dims)
     return ds_all
 
 
 def ds_to_df(ds, station_coord):
     # Create a dict of Pandas DF {'site': DF} with the df col prefixed with the source
+    # print(ds)
     dict_df = {}
     for station in ds[station_coord].values:
         df_list = []
@@ -220,48 +215,27 @@ def ds_to_df(ds, station_coord):
             # get scale and location
             locator = {station_coord: station,
                        'source': source,
-                       'scaling_extent': ds['scaling_extent'].values[0]}
-            ds_extract = ds.sel(**locator)
+                       'ev_param': ['location', 'scale']}
+            ds_extract = ds.sel(**locator).drop(['gev_scaling', 'scaling_param'])
+            print(ds_extract)
+            # expand the gev params to ds
+            ds_gev_params = ds_extract['gev'].to_dataset(dim='ev_param')
+            print(ds_gev_params['location'].sel(ci=['estimate', '0.5']).load())
             df = ds_extract.to_dataframe()
-            drop_list = [station_coord, 'source', 'scaling_extent',
-                        'location_line_slope', 'scale_line_slope',
-                         'location_line_intercept', 'scale_line_intercept',
-                        'scaling_ratio', 'location_lr', 'scale_lr']
-            for d in drop_list:
-                try:
-                    df.drop(d, axis=1, inplace=True)
-                except KeyError:
-                    pass
+            keep = ['source', 'station', 'gev', 'gev_scaled']
+            df = df[keep]
+            print(df.head())
             rename_rules = {'location': '{}_location'.format(source),
                             'scale': '{}_scale'.format(source)}
             df.rename(columns=rename_rules, inplace=True)
             df_list.append(df)
             # Get regression lines
-            for scaling_extent in ds['scaling_extent'].values:
-                try:
-                    extent = scaling_extent.decode("utf-8")
-                except AttributeError:
-                    extent = scaling_extent
-                locator = {station_coord: station,
-                           'source': source,
-                           'scaling_extent': scaling_extent}
-                ds_extract2 = ds.sel(**locator)
-                df2 = ds_extract2.to_dataframe()
-                drop_list = [station_coord, 'source', 'scaling_extent',
-                            'location_line_slope', 'scale_line_slope',
-                            'location_line_intercept', 'scale_line_intercept',
-                            'scaling_ratio', 'location', 'scale']
-                for d in drop_list:
-                    try:
-                        df2.drop(d, axis=1, inplace=True)
-                    except KeyError:
-                        pass
-                rename_rules = {
-                    'location_lr': '{}_location_lr_{}'.format(source, extent),
-                    'scale_lr': '{}_scale_lr_{}'.format(source, extent)
-                    }
-                df2.rename(columns=rename_rules, inplace=True)
-                df_list.append(df2)
+            rename_rules = {
+                'location_lr': '{}_location_lr'.format(source, extent),
+                'scale_lr': '{}_scale_lr'.format(source, extent)
+                }
+            df2.rename(columns=rename_rules, inplace=True)
+            df_list.append(df2)
             # print(df)
         df_all = pd.concat(df_list, axis=1, sort=False)
         dict_df[station] =  df_all
@@ -1001,15 +975,13 @@ def fig_midas_mean(ds_pairs, fig_name):
 def scatter_intensity(ds_era, ds_gauges, fig_name):
     """
     """
-    # change era's longitude to be the same as midas gauges
-    ds_era['longitude'] = ds_era['longitude'] - 180
     # keep only stations with coordinates
     ds_gauges = ds_gauges.reset_coords(['latitude', 'longitude'])
     gauges_sel = np.logical_and(np.isfinite(ds_gauges['latitude']), np.isfinite(ds_gauges['longitude']))
     ds_gauges = ds_gauges.where(gauges_sel, drop=True)
     # Select the cells above the stations
     ds_era_sel = ds_era.sel(latitude=ds_gauges['latitude'],
-                            longitude=ds_gauges['longitude'],
+                            longitude=convert_lon(ds_gauges['longitude']),
                             method='nearest')
     ds_list = []
     for ds, name in zip([ds_era_sel, ds_gauges], ['ERA5', 'MIDAS']):
@@ -1024,9 +996,9 @@ def scatter_intensity(ds_era, ds_gauges, fig_name):
     # GEV param from scaling
     sel_dict = dict(source='ERA5', ev_param=['location', 'scale'])
     slope = ds['gev_scaling'].sel(scaling_param='slope', **sel_dict)
-    intercept = ds['gev_scaling'].sel(scaling_param='slope', **sel_dict)
+    intercept = ds['gev_scaling'].sel(scaling_param='intercept', **sel_dict)
     params_from_scaling = (10**intercept) * ds['duration']**slope
-    params_from_scaling = params_from_scaling.expand_dims('source').drop('scaling_param')
+    params_from_scaling = params_from_scaling.expand_dims('source')#.drop('scaling_param')
     params_from_scaling.coords['source'] = ['ERA5_scaled']
     # Add non-scaled shape.
     # print(params_from_scaling)
@@ -1102,7 +1074,8 @@ def main():
 
     # fig_gauges_map('midas_gauges_map.pdf')
 
-    plot_scaling_per_site(ds, 'sites_scaling_select_2000-2017-11sites.pdf')
+    ds_combined = combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
+    plot_scaling_per_site(ds_combined, 'sites_scaling_select_1979-2018-11sites.pdf')
 
     ##############
     # scatter_intensity(ds_era, ds_midas, 'scatter_intensity.pdf')
