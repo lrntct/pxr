@@ -22,7 +22,7 @@ iscalar = np.int32
 EM = fscalar(0.577215664901532860606512090082)
 
 
-## Rank and plotting positions ##
+## Rank, ECDF and plotting positions ##
 
 def rank_ams(da_ams):
     """Rank the annual maxs in in ascending order
@@ -40,7 +40,29 @@ def rank_ams(da_ams):
     return ranks.transpose(*da_ams.dims)
 
 
-def ecdf_weibull(rank, n_obs):
+def ecdf(rank, n_obs):
+    """Return the ECDF
+    Recommended as an unbiased estimator for PWM by:
+    Hosking, J. R. M., and J. R. Wallis. 1995.
+    “A Comparison of Unbiased and Plotting-Position Estimators of L Moments.”
+    Water Resources Research 31 (8): 2019–25.
+    https://doi.org/10.1029/95WR01230.
+    """
+    return rank / n_obs
+
+@nb.njit()
+def ecdf_jit(rank, n_obs):
+    """Return the ECDF
+    Recommended as an unbiased estimator for PWM by:
+    Hosking, J. R. M., and J. R. Wallis. 1995.
+    “A Comparison of Unbiased and Plotting-Position Estimators of L Moments.”
+    Water Resources Research 31 (8): 2019–25.
+    https://doi.org/10.1029/95WR01230.
+    """
+    return rank / n_obs
+
+
+def pp_weibull(rank, n_obs):
     """Return the Weibull plotting position
     Recommended by:
     Makkonen, Lasse. 2006.
@@ -51,14 +73,14 @@ def ecdf_weibull(rank, n_obs):
     return rank / (n_obs + 1)
 
 
-def ecdf_gringorten(rank, n_obs):
+def pp_gringorten(rank, n_obs):
     """Return the Gringorten plotting position
     """
     return (rank - fscalar(0.44)) / (n_obs + fscalar(.12))
 
 
 @nb.njit()
-def ecdf_landwehr(rank, n_obs):
+def pp_landwehr(rank, n_obs):
     """Return the plotting position defined in:
     Hosking, J. R. M. (1990).
     L-Moments: Analysis and Estimation of Distributions Using Linear Combinations of Order Statistics.
@@ -69,18 +91,7 @@ def ecdf_landwehr(rank, n_obs):
 
 
 @nb.njit()
-def ecdf_hosking(rank, n_obs):
-    """Return the unbiased estimator suggested by:
-    Hosking, J. R. M., and J. R. Wallis. 1995.
-    “A Comparison of Unbiased and Plotting-Position Estimators of L Moments.”
-    Water Resources Research 31 (8): 2019–25.
-    https://doi.org/10.1029/95WR01230.
-    """
-    return rank / n_obs
-
-
-@nb.njit()
-def ecdf_goda_jit(rank, n_obs):
+def pp_goda_jit(rank, n_obs):
     """Return the plotting position defined in:
     Goda, Yoshimi. 2011.
     “Plotting-Position Estimator for the L-Moment Method and Quantile Confidence Interval
@@ -91,7 +102,7 @@ def ecdf_goda_jit(rank, n_obs):
     return (rank - fscalar(0.45)) / n_obs
 
 
-def ecdf_goda(rank, n_obs):
+def pp_goda(rank, n_obs):
     """Return the plotting position defined in:
     Goda, Yoshimi. 2011.
     “Plotting-Position Estimator for the L-Moment Method and Quantile Confidence Interval
@@ -216,7 +227,7 @@ def gev_from_samples(arr_ams, ax_year, sampling_idx, n_obs, shape_param):
     # rank samples
     rank = bottleneck.nanrankdata(arr_samples, axis=ax_year).astype(fscalar)
     # fit distribution. ev_apams is a tuple of ndarrays.
-    ecdf = ecdf_hosking(rank, n_obs)
+    ecdf = ecdf_jit(rank, n_obs)
     ev_params = gev_pwm(arr_samples, ecdf, n_obs, ax_year, shape=shape_param)
     # Add one axis. Changes shape to (ev_params, samples).
     return np.array(ev_params)

@@ -19,8 +19,8 @@ import scaling
 import helper
 
 
-DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
-# DATA_DIR = '../data/MIDAS/'
+DATA_DIR_ERA = '/home/lunet/gylc4/geodata/ERA5/'
+DATA_DIR_MIDAS = '../data/MIDAS/'
 HOURLY_ERA5 = 'era5_1979-2018_precip.zarr'
 HOURLY_MIDAS = 'midas_1979-2018_precip_select.zarr'
 
@@ -112,7 +112,7 @@ def step22_rank_ecdf(ds_ams, chunks):
     # Merge arrays in a single dataset, set the dask chunks
     ds = xr.merge([da_ams, da_ranks]).chunk(chunks)
     # Empirical probability
-    ds['ecdf_gringorten'] = ev_fit.ecdf_gringorten(da_ranks, n_obs)
+    ds['ecdf'] = ev_fit.ecdf(da_ranks, n_obs)
     return ds
 
 
@@ -120,7 +120,7 @@ def step23_fit_gev_with_ci(ds):
     """Estimate GEV parameters and their confidence intervals.
     CI are estimated with the bootstrap method.
     """
-    ds['gev'] = ev_fit.fit_gev(ds, DTYPE, n_sample=1000, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
+    ds['gev'] = ev_fit.fit_gev(ds, DTYPE, n_sample=10000, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
     return ds
 
 
@@ -134,7 +134,7 @@ def step24_goodness_of_fit(ds, chunks):
     da_ams = ds['annual_max']
     ds['cdf'] = ev_fit.gev_cdf(da_ams, loc, scale, shape).transpose(*da_ams.dims)
     # Lilliefors
-    ds['KS_D'] = gof.KS_test(ds['ecdf_gringorten'], ds['cdf'])
+    ds['KS_D'] = gof.KS_test(ds['ecdf'], ds['cdf'])
     ds = gof.lilliefors_Dcrit(ds, chunks)
     return ds
 
@@ -143,7 +143,7 @@ def step3_scaling_with_ci(ds):
     """Estimate linear regression and their confidence intervals.
     CI are estimated with the bootstrap method.
     """
-    ds['gev_scaling'] = scaling.scaling_gev(ds, DTYPE, n_sample=1000, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
+    ds['gev_scaling'] = scaling.scaling_gev(ds, DTYPE, n_sample=10000, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
     return ds
 
 
@@ -162,23 +162,25 @@ def main():
         temp_res = 1  # temporal resolution in hours
         precip_var = 'precipitation'
         time_var = 'time'
-        hourly_path = os.path.join(DATA_DIR, HOURLY_ERA5)
-        ams_path = os.path.join(DATA_DIR, AMS_ERA5)
-        path_ranked = os.path.join(DATA_DIR, ANNUAL_ERA5_BASENAME.format('ranked'))
-        path_gev = os.path.join(DATA_DIR, ANNUAL_ERA5_BASENAME.format('gev'))
-        path_gof = os.path.join(DATA_DIR, ANNUAL_ERA5_BASENAME.format('gof'))
-        path_scaling = os.path.join(DATA_DIR, ANNUAL_ERA5_BASENAME.format('scaling'))
+        data_dir = DATA_DIR_ERA
+        hourly_path = os.path.join(data_dir, HOURLY_ERA5)
+        ams_path = os.path.join(data_dir, AMS_ERA5)
+        path_ranked = os.path.join(data_dir, ANNUAL_ERA5_BASENAME.format('ranked'))
+        path_gev = os.path.join(data_dir, ANNUAL_ERA5_BASENAME.format('gev'))
+        path_gof = os.path.join(data_dir, ANNUAL_ERA5_BASENAME.format('gof'))
+        path_scaling = os.path.join(data_dir, ANNUAL_ERA5_BASENAME.format('scaling2'))
         chunk_size = ERA5_CHUNKS
     elif SOURCE == 'MIDAS':
         temp_res = 1  # temporal resolution in hours
         precip_var = 'prcp_amt'
         time_var = 'end_time'
-        hourly_path = os.path.join(DATA_DIR, HOURLY_MIDAS)
-        ams_path = os.path.join(DATA_DIR, AMS_MIDAS)
-        path_ranked = os.path.join(DATA_DIR, ANNUAL_MIDAS_BASENAME.format('ranked'))
-        path_gev = os.path.join(DATA_DIR, ANNUAL_MIDAS_BASENAME.format('gev'))
-        path_gof = os.path.join(DATA_DIR, ANNUAL_MIDAS_BASENAME.format('gof'))
-        path_scaling = os.path.join(DATA_DIR, ANNUAL_MIDAS_BASENAME.format('scaling'))
+        data_dir = DATA_DIR_MIDAS
+        hourly_path = os.path.join(data_dir, HOURLY_MIDAS)
+        ams_path = os.path.join(data_dir, AMS_MIDAS)
+        path_ranked = os.path.join(data_dir, ANNUAL_MIDAS_BASENAME.format('ranked'))
+        path_gev = os.path.join(data_dir, ANNUAL_MIDAS_BASENAME.format('gev'))
+        path_gof = os.path.join(data_dir, ANNUAL_MIDAS_BASENAME.format('gof'))
+        path_scaling = os.path.join(data_dir, ANNUAL_MIDAS_BASENAME.format('scaling'))
         chunk_size = MIDAS_CHUNKS
     else:
         raise KeyError('Unknown source: {}'.format(SOURCE))
@@ -197,10 +199,11 @@ def main():
 
 
         # Rank # For unknown reason, Dask distributed create buggy ECDF.
-        # ams = xr.open_zarr(ams_path)
-        # print(ams)
-        # ds_ranked = step22_rank_ecdf(ams, chunk_size)
-        # to_zarr(ds_ranked, path_ranked)
+        ams = xr.open_zarr(ams_path)
+        print(ams)
+        print('## Ranking ##')
+        ds_ranked = step22_rank_ecdf(ams, chunk_size)
+        to_zarr(ds_ranked, path_ranked)
 
         # For the next steps, use dask distributed LocalCluster (uses processes instead of threads)
         cluster = LocalCluster(n_workers=32, threads_per_worker=1)
@@ -208,13 +211,13 @@ def main():
         client = Client(cluster)
 
         # fit EV #
-        # print('Fit EV')
-        # ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT]
-        # ds_gev = step23_fit_gev_with_ci(ds_ranked)
-        # to_zarr(ds_gev, path_gev)
+        print('## Fit EV ##')
+        ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT]
+        ds_gev = step23_fit_gev_with_ci(ds_ranked)
+        to_zarr(ds_gev, path_gev)
 
         # GoF #
-        print('Goodness of fit')
+        print('## Goodness of fit ##')
         ds_gev = xr.open_zarr(path_gev)
         ds_gof = step24_goodness_of_fit(ds_gev, chunk_size)
         to_zarr(ds_gof, path_gof)
