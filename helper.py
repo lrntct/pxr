@@ -29,7 +29,7 @@ def ci_range_to_qlevels(range_list):
         q_levels.append(c_high)
     return sorted(q_levels)
 
-# @nb.njit()
+
 def OLS_jit(x, y, axis=-1):
     """linear regression using the Ordinary Least Squares.
     """
@@ -45,6 +45,26 @@ def OLS_jit(x, y, axis=-1):
                 np.sum(np.square(y - mean_y), axis=axis, keepdims=True))
     params = np.array([slope, intercept, rsquared])
     return np.squeeze(params, axis=-1)
+
+
+def OLS_xr(x, y, dim=None):
+    """linear regression using the Ordinary Least Squares.
+    """
+    axis = x.get_axis_num(dim)
+    assert axis == y.get_axis_num(dim)
+    assert x.shape == y.shape
+
+    mean_x = x.mean(dim=dim)
+    mean_y = y.mean(dim=dim)
+
+    slope = (((x - mean_x) * (y - mean_y)).sum(dim=dim) /
+             ((x - mean_x) * (x - mean_x)).sum(dim=dim))
+    intercept = mean_y - slope * mean_x
+    # coefficient of determination
+    fitted = slope * x + intercept
+    rsquared = (np.square((fitted - mean_y).sum(dim=dim)) /
+                np.square((y - mean_y).sum(dim=dim)))
+    return slope, intercept, rsquared
 
 
 def get_sampling_idx(n_sample, n_obs):

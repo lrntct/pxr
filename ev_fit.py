@@ -50,16 +50,7 @@ def ecdf(rank, n_obs):
     """
     return rank / n_obs
 
-@nb.njit()
-def ecdf_jit(rank, n_obs):
-    """Return the ECDF
-    Recommended as an unbiased estimator for PWM by:
-    Hosking, J. R. M., and J. R. Wallis. 1995.
-    “A Comparison of Unbiased and Plotting-Position Estimators of L Moments.”
-    Water Resources Research 31 (8): 2019–25.
-    https://doi.org/10.1029/95WR01230.
-    """
-    return rank / n_obs
+ecdf_jit = nb.njit(ecdf)
 
 
 def pp_weibull(rank, n_obs):
