@@ -13,6 +13,11 @@ def log(x):
 
 
 @nb.vectorize(["float32(float32)", "float64(float64)"])
+def log10(x):
+    return math.log10(x)
+
+
+@nb.vectorize(["float32(float32)", "float64(float64)"])
 def gamma(x):
     return math.gamma(x)
 

@@ -19,7 +19,7 @@ def gev_scaling_func(arr_ams, ax_year, ax_duration, sampling_idx, n_obs, log_dur
     ev_params = ev_fit.gev_from_samples(arr_ams, ax_year, sampling_idx, n_obs, shape_param)
     ax_duration += 1
     # Log transform the parameters
-    log_ev_params = helper.log(ev_params)
+    log_ev_params = helper.log10(ev_params)
     # Add two dimensions to duration to fit the shape of ev_params
     log_duration = np.expand_dims(np.expand_dims(log_duration, axis=0), axis=0)
     assert len(log_duration.shape) == len(log_ev_params.shape)
@@ -39,7 +39,7 @@ def scaling_gev(ds, dtype, n_sample=500, ci_range=[0.95], shape=None):
     # Random sampling of indices, shared across all cells
     n_obs = len(ds['year'])
     sampling_idx = helper.get_sampling_idx(n_sample, n_obs)
-    log_dur = helper.log(ds['duration'].values)
+    log_dur = helper.log10(ds['duration'].values)
     # Estimate parameters and CI
     q_levels = helper.ci_range_to_qlevels(ci_range)
     da_ci = xr.apply_ufunc(
