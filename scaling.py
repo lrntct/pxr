@@ -60,7 +60,8 @@ def scaling_gev(ds, dtype, n_sample=500, ci_range=[0.95], shape=None):
         output_dtypes=[dtype],
         output_sizes={'ci': len(q_levels)+1, 'scaling_param': 3, 'ev_param': 3}
         )
-    da_ci = da_ci.assign_coords(ci=['estimate'] + q_levels,
+    q_levels_str = ["{0:.3f}".format(l) for l in q_levels]
+    da_ci = da_ci.assign_coords(ci=['estimate'] + q_levels_str,
                                 scaling_param=['slope', 'intercept', 'rsquared'],
                                 ev_param=['location', 'scale', 'shape'])
     return da_ci.rename('gev_scaling')
