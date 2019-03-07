@@ -64,6 +64,7 @@ def pp_weibull(rank, n_obs):
     return rank / (n_obs + 1)
 
 
+@nb.njit()
 def pp_gringorten(rank, n_obs):
     """Return the Gringorten plotting position
     """

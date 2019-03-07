@@ -106,11 +106,11 @@ def step21_pole_trim(ds):
 def step22_rank_ecdf(ds_ams, chunks):
     """Compute the rank of AMS and the empirical probability
     """
-    n_obs = ds_ams['year'].count().item()
     da_ams = ds_ams['annual_max']
+    n_obs = np.isfinite(da_ams).sum(dim='year').rename('n_obs')
     da_ranks = ev_fit.rank_ams(da_ams)
     # Merge arrays in a single dataset, set the dask chunks
-    ds = xr.merge([da_ams, da_ranks]).chunk(chunks)
+    ds = xr.merge([da_ams, da_ranks, n_obs]).chunk(chunks)
     # Empirical probability
     ds['ecdf'] = ev_fit.ecdf(da_ranks, n_obs)
     return ds.chunk(chunks)
