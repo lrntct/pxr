@@ -25,8 +25,8 @@ END_YEAR = 2018
 BASE_DIR = '/home/lunet/gylc4/geodata/MIDAS/'
 BASE_FILE = 'midas_rainhrly_{y}01-{y}12.txt'
 STATIONS_DIR = os.path.join(BASE_DIR, 'stations')
-STATIONS_LIST = os.path.join(BASE_DIR, 'src_id_list.xls')
-OUT_FILE = '/home/lunet/gylc4/geodata/MIDAS/midas_precip_{s}-{e}.zarr'
+STATIONS_LIST = os.path.join(BASE_DIR, 'src_id_list.csv')
+PRECIP_FILE = '/home/lunet/gylc4/geodata/MIDAS/midas_precip_{s}-{e}.zarr'
 SELECT_FILE = '../data/MIDAS/midas_{s}-{e}_precip_select.zarr'.format(s=START_YEAR, e=END_YEAR)
 PAIR_FILE = '../data/MIDAS/midas_{s}-{e}_precip_pairs.nc'
 
@@ -100,8 +100,6 @@ def read_stations(data_dir, start_year, end_year):
     df_stations = [gb.get_group(x) for x in gb.groups]
 
     # Create a xarray DataArray
-    df_stations_list = pd.read_excel(STATIONS_LIST, index_col=0)
-    df_stations_list = df_stations_list[~df_stations_list.index.duplicated(keep='first')]
     # print(df_stations_list.head())
     ds_stations = []
     idx = [[] for i in range(len(IDX_COL_NAMES))]
@@ -114,48 +112,72 @@ def read_stations(data_dir, start_year, end_year):
         src_id = df_dropped['src_id'].unique()[0]  # station unique identifier
         ds.coords['station'] = [src_id]
         ds.drop('src_id')
-        # Add other coordinates on the same dimension
-        try:
-            station_infos = df_stations_list.loc[[src_id]]
-            src_name = station_infos['SRC_NAME'].values[0]
-            lat = station_infos['HIGH_PRCN_LAT'].values[0]
-            lon = station_infos['HIGH_PRCN_LON'].values[0]
-        except KeyError:
-            src_name = None
-            lat = np.nan
-            lon = np.nan
-        ds.coords['src_name'] = xr.DataArray([src_name], dims='station')
-        ds.coords['latitude'] = xr.DataArray([lat], dims='station')
-        ds.coords['longitude'] = xr.DataArray([lon], dims='station')
+
+        # ds.coords['src_name'] = xr.DataArray([src_name], dims='station')
+        # ds.coords['latitude'] = xr.DataArray([lat], dims='station')
+        # ds.coords['longitude'] = xr.DataArray([lon], dims='station')
         ds_stations.append(ds)
 
     ds_concat = xr.concat(ds_stations, dim='station')
     return ds_concat
 
 
+def add_stations_metadata(ds, src_id):
+    # Read metadata
+    df_stations_list = pd.read_csv(src_id, index_col=0, sep='|')
+    df_stations_list = df_stations_list[~df_stations_list.index.duplicated(keep='first')]
+    # select metadata and keep as xarray
+    ds_srcid = df_stations_list[['SRC_NAME', 'HIGH_PRCN_LAT', 'HIGH_PRCN_LON']].sort_index().to_xarray()
+    # Keep only metadata of station present in the precip dataset
+    ds_list = []
+    for station in ds['station']:
+        try:
+            station_infos = ds_srcid.sel(SRC_ID=station).drop('SRC_ID')
+        except KeyError:
+            src_name = xr.DataArray([''], coords={'station': [station]}, dims='station')
+            lat = xr.DataArray([np.nan], coords={'station': [station]}, dims='station')
+            lon = xr.DataArray([np.nan], coords={'station': [station]}, dims='station')
+            station_infos = xr.Dataset({'SRC_NAME': src_name, 'HIGH_PRCN_LAT': lat, 'HIGH_PRCN_LON': lon})
+        ds_list.append(station_infos)
+    srcid_sel = xr.concat(ds_list, dim='station')
+    # Add coordinates to precip dataset
+    ds.coords['src_name'] = srcid_sel['SRC_NAME']
+    ds.coords['latitude'] = srcid_sel['HIGH_PRCN_LAT']
+    ds.coords['longitude'] = srcid_sel['HIGH_PRCN_LON']
+    return ds
+
+
 def select_stations(ds, ymin, ymax):
     # 90% of all hourly records in 365 days
     min_records = int(365*24*.9)
+    print('## Min record per year:', min_records)
     # Keep only the years of interest
     ds_short = ds.sel(end_time=slice(str(ymin), str(ymax)))
+    # Keep only station with coordinates
+    ds_sel = np.logical_and(np.isfinite(ds_short['latitude']), np.isfinite(ds_short['longitude']))
+    ds_with_coords = ds_short.where(ds_sel, drop=True)
     # Keep only the quality controlled data
-    # ds['qc'] = np.logical_or(ds_short['qc0'])
-    ds_cc = ds_short.where(~ds_short['qc0'] & ~ds_short['qc1'] & ~ds_short['qc3'])
+    ds_cc = ds_with_coords.where(~ds_short['qc0'] & ~ds_short['qc1'] & ~ds_short['qc3']).drop(['qc0', 'qc1', 'qc3'])
     # Number of values per year
-    da_year_count = ds_cc['prcp_amt'].groupby('end_time.year').count(dim='end_time')
-    min_years = int(len(da_year_count['year']) * .9)
-    print(min_years)
+    prcp_values_per_years = ds_cc['prcp_amt'].groupby('end_time.year').count(dim='end_time')
+    min_years = int(len(prcp_values_per_years['year']) * .9)
+    print('## Min complete year per station:', min_years)
+    flag_full_year = xr.where(prcp_values_per_years > min_records, True, False)
     # number of full years per station
-    num_of_full_years = da_year_count.where(da_year_count > min_records).count(dim='year')
-    ds_cc['full_years'] = num_of_full_years
-    # Stations with enough full years
-    full_stations = num_of_full_years.where(num_of_full_years > min_years, drop=True)
-    # print(full_stations.load())
-    kept_station_code = full_stations['station'].values
+    num_of_full_years = flag_full_year.sum(dim='year')
+    # ds_cc['full_years'] = num_of_full_years#.transpose(*ds_cc['prcp_amt'].dims)
 
-    kept_col = KEEP_VARS + ['full_years']
-    ds_sel = ds_cc.loc[{'station':kept_station_code}][kept_col]
-    return ds_sel
+    # Keep only stations with enough full years
+    precip_full_years = ds_cc.where(num_of_full_years > min_years, drop=True)
+    # Drop years without enough data
+    dropped_years = precip_full_years.groupby('end_time.year').where(flag_full_year).drop('year')
+
+    # Check that no partial year remains
+    year_count_after_drop = dropped_years['prcp_amt'].groupby('end_time.year').count(dim='end_time').values
+    pos_year_count_after_drop = year_count_after_drop[year_count_after_drop > 0]
+    assert np.all(pos_year_count_after_drop > min_records)
+
+    return dropped_years
 
 
 def qc0(ds):
@@ -234,33 +256,39 @@ def to_gdf(ds):
 
 
 def main():
-    with ProgressBar():
-        # ds = read_stations(STATIONS_DIR, START_YEAR, END_YEAR).chunk(CHUNKS)
-        # print(ds)
-        # ds.to_zarr(OUT_FILE.format(s=START_YEAR, e=END_YEAR), mode='w')
+    # with ProgressBar():
+    # ds = read_stations(STATIONS_DIR, START_YEAR, END_YEAR).chunk(CHUNKS)[KEEP_VARS]
+    # print(ds)
+    # ds.to_zarr(PRECIP_FILE.format(s=START_YEAR, e=END_YEAR), mode='w', encoding=ENCODING)
 
-        ds = xr.open_zarr(OUT_FILE.format(s=1950, e=2018))
-        ds = quality_assessment(ds)
-        ds_sel = select_stations(ds, START_YEAR, END_YEAR)#.chunk(CHUNKS)
-        ds_loaded = ds_sel.load()
-        print(ds_sel)
-        # print(ds_sel['prcp_amt'])
-        # print(ds_loaded['prcp_amt'].mean())
-        # print(ds_loaded['prcp_amt'].min())
-        # print(ds_loaded['prcp_amt'].max())
-        # print(ds_loaded['ob_hour_count'].max())
-        encoding = {'full_years': INT_ENCODING, **ENCODING}
-        ds_sel.to_zarr(SELECT_FILE, mode='w', encoding=encoding)
+    # Join
+    # ds_list = []
+    # for y_start in [1979, 1989, 1999, 2009]:
+    #     ds = xr.open_zarr(PRECIP_FILE.format(s=y_start, e=y_start+9)).drop(['longitude', 'latitude', 'src_name'])
+    #     # print(ds['latitude'].load())
+    #     ds_list.append(ds)
+    # ds_all = xr.concat(ds_list, dim='end_time', coords='minimal').chunk(CHUNKS)
+    # Add station metadata and save
+    # ds_precip = add_stations_metadata(ds_all, STATIONS_LIST)
+    # ds_all.to_zarr(PRECIP_FILE.format(s=1979, e=2018), mode='w', encoding=ENCODING)
 
-        ds_sel = xr.open_zarr(SELECT_FILE)
-        print(ds_sel)
-        gdf = to_gdf(ds_sel)
-        out_path = os.path.join('../data/MIDAS', "midas.gpkg")
-        gdf.to_file(out_path, driver="GPKG")
-        # print(ds_sel.max().load())
+    ds = xr.open_zarr(PRECIP_FILE.format(s=START_YEAR, e=END_YEAR))
 
-        # ds_pairs = station_pairs(ds_sel)
-        # ds_pairs.load().to_netcdf(PAIR_FILE, mode='w')
+    ds = quality_assessment(ds)
+    ds_sel = select_stations(ds, START_YEAR, END_YEAR).load()
+    print(ds_sel)
+    # encoding = {'full_years': INT_ENCODING, **ENCODING}
+    ds_sel[KEEP_VARS].to_zarr(SELECT_FILE, mode='w', encoding=ENCODING)
+
+    # ds_sel = xr.open_zarr(SELECT_FILE)
+    # print(ds_sel)
+    # gdf = to_gdf(ds_sel)
+    # out_path = os.path.join('../data/MIDAS', "midas.gpkg")
+    # gdf.to_file(out_path, driver="GPKG")
+    # print(ds_sel.max().load())
+
+    # ds_pairs = station_pairs(ds_sel)
+    # ds_pairs.load().to_netcdf(PAIR_FILE, mode='w')
 
 
 
