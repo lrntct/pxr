@@ -57,7 +57,7 @@ ERA5_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 20*4, 'longitude': 20*4}
 # When resolution is 1 degree
 ANNUAL_CHUNKS_1DEG = {'year': -1, 'duration': -1, 'latitude': 30, 'longitude': 30}
 EXTRACT_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 30, 'longitude': 30}
-MIDAS_CHUNKS = {'year': -1, 'duration':-1, 'station': 200}
+MIDAS_CHUNKS = {'year': -1, 'duration':-1, 'station': 1}
 GEN_FLOAT_ENCODING = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
 STR_ENCODING = {'dtype': 'U'}
 COORDS_ENCODING = {'ci': STR_ENCODING,
@@ -116,11 +116,11 @@ def step22_rank_ecdf(ds_ams, chunks):
     return ds.chunk(chunks)
 
 
-def step23_fit_gev_with_ci(ds):
+def step23_fit_gev_with_ci(ds, n_sample):
     """Estimate GEV parameters and their confidence intervals.
     CI are estimated with the bootstrap method.
     """
-    ds['gev'] = ev_fit.fit_gev(ds, DTYPE, n_sample=1000, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
+    ds['gev'] = ev_fit.fit_gev(ds, DTYPE, n_sample=n_sample, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
     return ds
 
 
@@ -139,11 +139,11 @@ def step24_goodness_of_fit(ds, chunks):
     return ds
 
 
-def step3_scaling_with_ci(ds):
+def step3_scaling_with_ci(ds, n_sample):
     """Estimate linear regression and their confidence intervals.
     CI are estimated with the bootstrap method.
     """
-    ds['gev_scaling'] = scaling.scaling_gev(ds, DTYPE, n_sample=1000, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
+    ds['gev_scaling'] = scaling.scaling_gev(ds, DTYPE, n_sample=n_sample, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
     return ds
 
 
@@ -156,7 +156,8 @@ def to_zarr(ds, path):
 
 def main():
     # Select the source ('ERA5' or 'MIDAS')
-    SOURCE = 'ERA5'
+    SOURCE = 'MIDAS'
+    BS_SAMPLE = 1000
 
     if SOURCE == 'ERA5':
         temp_res = 1  # temporal resolution in hours
@@ -187,6 +188,7 @@ def main():
 
     with ProgressBar():
         # Get annual maxima #
+        # print('## AMS: {} ##'.format(datetime.now()))
         # hourly = xr.open_zarr(hourly_path)
         # ams = step1_annual_maxs_of_roll_mean(hourly, precip_var, time_var, DURATIONS_ALL, temp_res).chunk(chunk_size)
         # print(ams)
@@ -200,11 +202,11 @@ def main():
 
         ## Rank # For unknown reason Dask distributed create buggy ECDF.
         ams = xr.open_zarr(ams_path)
-        # print(ams)
-        # print('## Rank: {} ##'.format(datetime.now()))
-        # ds_ranked = step22_rank_ecdf(ams, chunk_size)
-        # print(ds_ranked)
-        # to_zarr(ds_ranked, path_ranked)
+        print(ams)
+        print('## Rank: {} ##'.format(datetime.now()))
+        ds_ranked = step22_rank_ecdf(ams, chunk_size)
+        print(ds_ranked)
+        to_zarr(ds_ranked, path_ranked)
 
         ## For the next steps, use dask distributed LocalCluster (uses processes instead of threads)
         cluster = LocalCluster(n_workers=32, threads_per_worker=1)
@@ -214,7 +216,7 @@ def main():
         ## fit EV ##
         # print('## Fit EV: {} ##'.format(datetime.now()))
         # ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT]
-        # ds_gev = step23_fit_gev_with_ci(ds_ranked)
+        # ds_gev = step23_fit_gev_with_ci(ds_ranked, BS_SAMPLE)
         # to_zarr(ds_gev, path_gev)
 
         ## GoF ##
@@ -224,10 +226,10 @@ def main():
         # to_zarr(ds_gof, path_gof)
 
         ## Scaling ##
-        print('## Scaling: {} ##'.format(datetime.now()))
-        ds_gof = xr.open_zarr(path_gof)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
-        ds_scaling = step3_scaling_with_ci(ds_gof)
-        to_zarr(ds_scaling, path_scaling)
+        # print('## Scaling: {} ##'.format(datetime.now()))
+        # ds_gof = xr.open_zarr(path_gof)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
+        # ds_scaling = step3_scaling_with_ci(ds_gof, BS_SAMPLE)
+        # to_zarr(ds_scaling, path_scaling)
 
 
 if __name__ == "__main__":
