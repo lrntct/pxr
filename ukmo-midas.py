@@ -162,19 +162,23 @@ def select_stations(ds, ymin, ymax):
     prcp_values_per_years = ds_cc['prcp_amt'].groupby('end_time.year').count(dim='end_time')
     min_years = int(len(prcp_values_per_years['year']) * .9)
     print('## Min complete year per station:', min_years)
-    flag_full_year = xr.where(prcp_values_per_years > min_records, True, False)
+    flag_full_year = xr.where(prcp_values_per_years >= min_records, True, False)
     # number of full years per station
     num_of_full_years = flag_full_year.sum(dim='year')
     # ds_cc['full_years'] = num_of_full_years#.transpose(*ds_cc['prcp_amt'].dims)
 
     # Keep only stations with enough full years
-    precip_full_years = ds_cc.where(num_of_full_years > min_years, drop=True)
+    precip_full_years = ds_cc.where(num_of_full_years >= min_years, drop=True)
     # Drop years without enough data
     dropped_years = precip_full_years.groupby('end_time.year').where(flag_full_year).drop('year')
 
     # Check that no partial year remains
-    year_count_after_drop = dropped_years['prcp_amt'].groupby('end_time.year').count(dim='end_time').values
-    pos_year_count_after_drop = year_count_after_drop[year_count_after_drop > 0]
+    year_count_after_drop = dropped_years['prcp_amt'].groupby('end_time.year').count(dim='end_time')
+    flag_full_year = xr.where(year_count_after_drop > min_records, True, False)
+    # num_of_full_years = flag_full_year.sum(dim='year')  # number of full years per station
+    # print(num_of_full_years.load())
+    arr_year_count_after_drop = year_count_after_drop.values
+    pos_year_count_after_drop = arr_year_count_after_drop[arr_year_count_after_drop > 0]
     assert np.all(pos_year_count_after_drop > min_records)
 
     return dropped_years
@@ -272,19 +276,19 @@ def main():
     # ds_precip = add_stations_metadata(ds_all, STATIONS_LIST)
     # ds_all.to_zarr(PRECIP_FILE.format(s=1979, e=2018), mode='w', encoding=ENCODING)
 
-    ds = xr.open_zarr(PRECIP_FILE.format(s=START_YEAR, e=END_YEAR))
+    # ds = xr.open_zarr(PRECIP_FILE.format(s=START_YEAR, e=END_YEAR))
 
-    ds = quality_assessment(ds)
-    ds_sel = select_stations(ds, START_YEAR, END_YEAR).load()
-    print(ds_sel)
-    # encoding = {'full_years': INT_ENCODING, **ENCODING}
-    ds_sel[KEEP_VARS].to_zarr(SELECT_FILE, mode='w', encoding=ENCODING)
-
-    # ds_sel = xr.open_zarr(SELECT_FILE)
+    # ds = quality_assessment(ds)
+    # ds_sel = select_stations(ds, START_YEAR, END_YEAR).load()
     # print(ds_sel)
-    # gdf = to_gdf(ds_sel)
-    # out_path = os.path.join('../data/MIDAS', "midas.gpkg")
-    # gdf.to_file(out_path, driver="GPKG")
+    # encoding = {'full_years': INT_ENCODING, **ENCODING}
+    # ds_sel[KEEP_VARS].to_zarr(SELECT_FILE, mode='w', encoding=ENCODING)
+
+    ds_sel = xr.open_zarr(SELECT_FILE)
+    print(ds_sel)
+    gdf = to_gdf(ds_sel)
+    out_path = os.path.join('../data/MIDAS', "midas.gpkg")
+    gdf.to_file(out_path, driver="GPKG")
     # print(ds_sel.max().load())
 
     # ds_pairs = station_pairs(ds_sel)
