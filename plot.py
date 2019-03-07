@@ -27,7 +27,7 @@ import helper
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
 # HOURLY_FILE = 'era5_2000-2012_precip.zarr'
-ERA_AMS_FILE = 'era5_1979-2018_ams_scaling.zarr'
+ERA_AMS_FILE = 'era5_1979-2018_ams_scaling2.zarr'
 MIDAS_AMS_FILE = '../data/MIDAS/midas_1979-2018_ams_scaling.zarr'
 PLOT_DIR = '../plot'
 
@@ -61,10 +61,8 @@ C_SECONDARY_2 = '#89c653'
 def convert_lon(longitude):
     """convert negative longitude into 360 longitude
     """
-    if np.any(longitude < 0):
-        return longitude + 360
-    else:
-        return longitude
+    return xr.where(longitude < 0, longitude + 360, longitude)
+    # return np.where(longitude < 0, longitude + 360, longitude)
 
 
 def single_map(da, cbar_label, title, fig_name, center=None, reverse=False):
@@ -215,36 +213,36 @@ def ds_to_df(ds, station_coord):
             # get scale and location
             locator = {station_coord: station,
                        'source': source,
+                       'ci': 'estimate',
                        'ev_param': ['location', 'scale']}
             ds_extract = ds.sel(**locator).drop(['gev_scaling', 'scaling_param'])
-            print(ds_extract)
+            # print(ds_extract)
             # expand the gev params to ds
             ds_gev_params = ds_extract['gev'].to_dataset(dim='ev_param')
-            print(ds_gev_params['location'].sel(ci=['estimate', '0.5']).load())
-            df = ds_extract.to_dataframe()
-            keep = ['source', 'station', 'gev', 'gev_scaled']
-            df = df[keep]
-            print(df.head())
+            df = ds_gev_params.to_dataframe()
             rename_rules = {'location': '{}_location'.format(source),
                             'scale': '{}_scale'.format(source)}
             df.rename(columns=rename_rules, inplace=True)
+            # print(df.head())
             df_list.append(df)
-            # Get regression lines
+            # Get values from regression
+            ds_gev_params = ds_extract['gev_scaled'].to_dataset(dim='ev_param')
+            df2 = ds_gev_params.to_dataframe()
             rename_rules = {
-                'location_lr': '{}_location_lr'.format(source, extent),
-                'scale_lr': '{}_scale_lr'.format(source, extent)
+                'location': '{}_location_lr'.format(source),
+                'scale': '{}_scale_lr'.format(source)
                 }
             df2.rename(columns=rename_rules, inplace=True)
             df_list.append(df2)
             # print(df)
         df_all = pd.concat(df_list, axis=1, sort=False)
+        # print(df_all.head())
         dict_df[station] =  df_all
     return dict_df
 
 
 def plot_point_map(ds, ax):
     ds_sel = ds.sel(duration=ds.duration.values[0],
-                    scaling_extent=ds.scaling_extent.values[0],
                     source=ds.source.values[0],)
     df = ds_sel.to_dataframe()
     df['geometry'] = [shapely.geometry.Point(lon, lat)
@@ -262,25 +260,25 @@ def plot_scaling_per_site(ds, fig_name):
     """
     linesyles = {
         # 'MIDAS_location': dict(linestyle='None', linewidth=0, marker='v', markersize=3,
-        #                        color=C_PRIMARY_1, label='Location $\mu$ (MIDAS)'),
+        #                        color=C_PRIMARY_1, label='Location $\psi$ (MIDAS)'),
         # 'MIDAS_location_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0,
         #                           color=C_PRIMARY_1, label='$a d^\\alpha$ (MIDAS)'),
         # 'MIDAS_scale': dict(linestyle='None', linewidth=0, marker='v', markersize=3,
-        #                     color=C_PRIMARY_2, label='Scale $\sigma$ (MIDAS)'),
+        #                     color=C_PRIMARY_2, label='Scale $\lambda$ (MIDAS)'),
         # 'MIDAS_scale_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0,
-        #                        color=C_PRIMARY_2, label='$\sigma_D (d/D)^\\beta$ (MIDAS)'),
+        #                        color=C_PRIMARY_2, label='$\lambda_D (d/D)^\\beta$ (MIDAS)'),
         'ERA5_location': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
-                              color=C_SECONDARY_1, label='Location $\mu$'),
+                              color=C_SECONDARY_1, label='Location $\psi$'),
         'ERA5_scale': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
-                           color=C_SECONDARY_2, label='Scale $\sigma$'),
-        'ERA5_location_lr_all': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
+                           color=C_SECONDARY_2, label='Scale $\lambda$'),
+        'ERA5_location_lr': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
                                  color=C_SECONDARY_1, label='$ad^\\alpha$ (all)'),
-        'ERA5_scale_lr_all': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
+        'ERA5_scale_lr': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
                               color=C_SECONDARY_2, label='$bd^\\beta$ (all)'),
-        'ERA5_location_lr_daily': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
-                                 color=C_SECONDARY_1, label='$ad^\\alpha$ (daily)'),
-        'ERA5_scale_lr_daily': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
-                              color=C_SECONDARY_2, label='$bd^\\beta$ (daily)'),
+        # 'ERA5_location_lr_daily': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
+        #                          color=C_SECONDARY_1, label='$ad^\\alpha$ (daily)'),
+        # 'ERA5_scale_lr_daily': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
+        #                       color=C_SECONDARY_2, label='$bd^\\beta$ (daily)'),
                 }
 
     dict_df = ds_to_df(ds, 'station')
@@ -321,42 +319,20 @@ def plot_scaling_per_site(ds, fig_name):
                 continue
         lines, labels = ax.get_legend_handles_labels()
         ax.set_xlabel('$d$ (hours)')
-        ax.set_ylabel('$\mu, \sigma$')
+        ax.set_ylabel('$\psi, \lambda$')
         sites_ax_list.append(ax)
-        # Text box
-        # table_row = "{:<11s} {:>5.2f} {:>8.2f} {:>5.2f}\n"
-        # txt = ["{:<11s} {:>5s} {:>8s} {:>5s}\n".format('Parameter', 'ERA5', 'ERA5 day', 'GHCN'),
-        #        table_row.format('Loc. slope',
-        #                         #'$\eta(\mu)$',
-        #                         df_scaling_coeffs.loc['loc_lr_slope', 'ERA5'],
-        #                         df_scaling_coeffs.loc['loc_lr_slope', 'ERA5_MULTIDAILY'],
-        #                         df_scaling_coeffs.loc['loc_lr_slope', 'GHCN']),
-        #        table_row.format('Scale slope',
-        #                         #'$\eta(\sigma)$',
-        #                         df_scaling_coeffs.loc['scale_lr_slope', 'ERA5'],
-        #                         df_scaling_coeffs.loc['scale_lr_slope', 'ERA5_MULTIDAILY'],
-        #                         df_scaling_coeffs.loc['scale_lr_slope', 'GHCN']),
-        #        table_row.format('Slope ratio',
-        #                         #'$\eta(\mu) / \eta(\sigma)$',
-        #                         df_scaling_coeffs.loc['scaling_ratio', 'ERA5'],
-        #                         df_scaling_coeffs.loc['scaling_ratio', 'ERA5_MULTIDAILY'],
-        #                         df_scaling_coeffs.loc['scaling_ratio', 'GHCN'])
-        #     ]
-        # t = ax.text(0.01, 0.0, ''.join(txt), backgroundcolor='white',
-        #             horizontalalignment='left', verticalalignment='bottom',
-        #             transform=ax.transAxes, size=7, family='monospace'
-        #             )
-        # t.set_bbox(dict(alpha=0))  # force transparent background
         ax_num += 1
 
     # set ticks
     for ax in sites_ax_list:
         ax.set_xticks(XTICKS)
         ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+    for ax in sites_ax_list:
+        ax.margins(x=5)
 
     # plt.legend(lines, labels, loc='lower center', ncol=4)
 
-    lgd = fig.legend(lines, labels, loc='lower center', ncol=3)
+    lgd = fig.legend(lines, labels, loc='lower center', ncol=2)
     plt.tight_layout()
     plt.subplots_adjust(bottom=.15, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
@@ -677,7 +653,7 @@ def fig_scaling_differences_all(ds_era, ds_midas, fig_name):
     # plt.tick_params(labelcolor='none', top=False,
     #                 bottom=False, left=False, right=False)
     # plt.grid(False)
-    # ylabel = '$\log_{{10}}( d^{{\eta}} / (\mu, \sigma) )$'
+    # ylabel = '$\log_{{10}}( d^{{\eta}} / (\psi, \lambda) )$'
     # plt.ylabel(ylabel)
 
     handles, labels = ax.get_legend_handles_labels()
@@ -692,7 +668,7 @@ def plot_scaling_differences(param, df_list, ax, ylim=False):
     """
     Plot quantiles of differences
     """
-    param_symbols = {'location': '\mu_d', 'scale': '\sigma_d'}
+    param_symbols = {'location': '\psi_d', 'scale': '\lambda_d'}
     gradient_symbols = {'location': '\\alpha', 'scale': '\\beta'}
     intercept_symbols = {'location': 'a', 'scale': 'b'}
     colors = {'ERA5': C_PRIMARY_1, 'MIDAS': C_PRIMARY_2,
@@ -979,11 +955,16 @@ def scatter_intensity(ds_era, ds_gauges, fig_name):
     ds_gauges = ds_gauges.reset_coords(['latitude', 'longitude'])
     gauges_sel = np.logical_and(np.isfinite(ds_gauges['latitude']), np.isfinite(ds_gauges['longitude']))
     ds_gauges = ds_gauges.where(gauges_sel, drop=True)
+    # Convert gauges longitudes
+    ds_gauges['longitude'] = convert_lon(ds_gauges['longitude'])
+    print(ds_gauges.load())
     # Select the cells above the stations
     ds_era_sel = ds_era.sel(latitude=ds_gauges['latitude'],
-                            longitude=convert_lon(ds_gauges['longitude']),
+                            longitude=ds_gauges['longitude'],
                             method='nearest')
     ds_list = []
+    # print(ds_era_sel['longitude'])
+    # print(ds_gauges['longitude'])
     for ds, name in zip([ds_era_sel, ds_gauges], ['ERA5', 'MIDAS']):
         # Delete coordinates (no longer used)
         ds = ds.drop(['latitude', 'longitude', 'src_name'])
@@ -992,6 +973,7 @@ def scatter_intensity(ds_era, ds_gauges, fig_name):
         ds.coords['source'] = [name]
         ds_list.append(ds)
     ds = xr.merge(ds_list)
+    # print(ds)
 
     # GEV param from scaling
     sel_dict = dict(source='ERA5', ev_param=['location', 'scale'])
@@ -1010,11 +992,14 @@ def scatter_intensity(ds_era, ds_gauges, fig_name):
     params_from_scaling = xr.concat([params_from_scaling, da_shape], dim='ev_param')
     # print(params_from_scaling)
     gev_params = xr.concat([params_from_scaling, ds['gev']], dim='source')
+    # print(gev_params)
 
-    # ams_sel = ds['annual_max'].sel(duration=24, year=2000, station=23).load()
-    # print(ams_sel)
+    print(nan_ams_midas.load())
     # calculate intensity for given duration and return period
     da_list = []
+    # nan_midas = np.isnan(gev_params.sel(source='MIDAS', ci='estimate', ev_param='location')).sum(dim='duration')
+    # print('nan midas', nan_midas.load())
+
     for T in [2,10,50,100,500,1000]:
         loc = gev_params.sel(ev_param='location', ci='estimate')
         scale = gev_params.sel(ev_param='scale', ci='estimate')
@@ -1024,10 +1009,17 @@ def scatter_intensity(ds_era, ds_gauges, fig_name):
         intensity.coords['T'] = [T]
         da_list.append(intensity)
     da_i = xr.concat(da_list, dim='T').drop(['ci'])
-    # print(da_i.sel(source='MIDAS'))
-    # Regression line between ERA5 and MIDAS
-    slope, intercept, rsquared = helper.OLS_xr(da_i.sel(source='MIDAS'), da_i.sel(source='ERA5'), dim='station')
-    # print(rsquared.load())
+    # print(da_i.sel(source='MIDAS').load())
+    # nan_midas = np.sum(np.isnan(da_i.sel(source='MIDAS').values))
+    # nan_era5 = np.sum(np.isnan(da_i.sel(source='ERA5').values))
+    # print('nan midas', nan_midas)
+    # print('nan_era5', nan_era5)
+    # Robust regression line between ERA5 and MIDAS
+
+    slope, intercept = helper.RLM(da_i.sel(source='MIDAS'),
+                                  da_i.sel(source='ERA5'),
+                                  dim='station')
+    # print(slope.load())
     df_i = da_i.to_dataframe()
     # Split intensities in two columns, one for each source
     da_list = []
@@ -1040,10 +1032,11 @@ def scatter_intensity(ds_era, ds_gauges, fig_name):
     # Plot some durations on facetgrid
     dur_sel = [1,6,24,240]
     df_i_s = df_i_s.loc[np.in1d(df_i_s['duration'], dur_sel)]
-    print(df_i_s.head())
+    # print(df_i_s.head())
     fg = sns.FacetGrid(df_i_s, sharex=False, sharey=False, row='T', col='duration')
-    fg = fg.map(sns.regplot, 'MIDAS', 'ERA5',  ci=None)
-    fg = fg.map(sns.regplot, 'MIDAS', 'ERA5_scaled',  ci=None, color='r')
+    fg = fg.map(plt.scatter, 'MIDAS', 'ERA5')
+    # fg = fg.map(plt.scatter, 'MIDAS', 'ERA5')
+    # fg = fg.map(sns.regplot, 'MIDAS', 'ERA5_scaled', color='r')
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
 
 
@@ -1051,7 +1044,11 @@ def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
     ds_midas = xr.open_zarr(MIDAS_AMS_FILE)
 
-    print(ds_era)
+    # print(ds_era)
+    # ams_midas = ds_midas['annual_max']
+    # nan_ams_midas = np.isnan(ams_midas).sum(dim=['year'])
+    # for d in nan_ams_midas['duration'].values:
+    #     print(nan_ams_midas.sel(duration=d).load())
 
     # fig_map_KS(ds_era)
 
@@ -1074,15 +1071,15 @@ def main():
 
     # fig_gauges_map('midas_gauges_map.pdf')
 
-    ds_combined = combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
-    plot_scaling_per_site(ds_combined, 'sites_scaling_select_1979-2018-11sites.pdf')
+    # ds_combined = combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
+    # plot_scaling_per_site(ds_combined, 'sites_scaling_select_1979-2018-11sites.pdf')
 
     ##############
     # scatter_intensity(ds_era, ds_midas, 'scatter_intensity.pdf')
 
 
     # single_map(ds_era['scaling_pearsonr'],
-    #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
+    #            title="$d^{\eta(\psi)}$ - $d^{\eta(\lambda)}$ correlation",
     #            cbar_label='Pearson correlation coefficient',
     #            fig_name='pearsonr.png')
 
