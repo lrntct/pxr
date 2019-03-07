@@ -5,6 +5,7 @@ import math
 import xarray as xr
 import numpy as np
 import numba as nb
+import statsmodels.api as sm
 
 
 @nb.vectorize(["float32(float32)", "float64(float64)"])
@@ -70,6 +71,32 @@ def OLS_xr(x, y, dim=None):
     rsquared = (np.square((fitted - mean_y).sum(dim=dim)) /
                 np.square((y - mean_y).sum(dim=dim)))
     return slope, intercept, rsquared
+
+
+def RLM_func(x, y, robust_norm):
+    """Fit a robust regression line.
+    """
+    x_const = sm.add_constant(x)
+    rlm_model = sm.RLM(y, x_const, M=robust_norm)
+    rlm_results = rlm_model.fit()
+    intercept, slope = rlm_results.params
+    return slope, intercept
+
+
+def RLM(x, y, dim=None):
+    """Fit a regression line using the Least Trimmed Squares.
+    """
+    robust_norm = sm.robust.norms.TrimmedMean()
+    slope, intercept = xr.apply_ufunc(
+        RLM_func,
+        x, y,
+        kwargs={'robust_norm': robust_norm},
+        vectorize=True,
+        input_core_dims=[[dim], [dim]],
+        output_core_dims=[[], []],
+        dask='allowed',
+        )
+    return slope, intercept
 
 
 def get_sampling_idx(n_sample, n_obs):
