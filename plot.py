@@ -957,7 +957,6 @@ def scatter_intensity(ds_era, ds_gauges, fig_name):
     ds_gauges = ds_gauges.where(gauges_sel, drop=True)
     # Convert gauges longitudes
     ds_gauges['longitude'] = convert_lon(ds_gauges['longitude'])
-    print(ds_gauges.load())
     # Select the cells above the stations
     ds_era_sel = ds_era.sel(latitude=ds_gauges['latitude'],
                             longitude=ds_gauges['longitude'],
@@ -994,12 +993,8 @@ def scatter_intensity(ds_era, ds_gauges, fig_name):
     gev_params = xr.concat([params_from_scaling, ds['gev']], dim='source')
     # print(gev_params)
 
-    print(nan_ams_midas.load())
     # calculate intensity for given duration and return period
     da_list = []
-    # nan_midas = np.isnan(gev_params.sel(source='MIDAS', ci='estimate', ev_param='location')).sum(dim='duration')
-    # print('nan midas', nan_midas.load())
-
     for T in [2,10,50,100,500,1000]:
         loc = gev_params.sel(ev_param='location', ci='estimate')
         scale = gev_params.sel(ev_param='scale', ci='estimate')
@@ -1009,21 +1004,27 @@ def scatter_intensity(ds_era, ds_gauges, fig_name):
         intensity.coords['T'] = [T]
         da_list.append(intensity)
     da_i = xr.concat(da_list, dim='T').drop(['ci'])
-    # print(da_i.sel(source='MIDAS').load())
-    # nan_midas = np.sum(np.isnan(da_i.sel(source='MIDAS').values))
-    # nan_era5 = np.sum(np.isnan(da_i.sel(source='ERA5').values))
-    # print('nan midas', nan_midas)
-    # print('nan_era5', nan_era5)
-    # Robust regression line between ERA5 and MIDAS
+    # print(da_i)
 
-    slope, intercept = helper.RLM(da_i.sel(source='MIDAS'),
-                                  da_i.sel(source='ERA5'),
-                                  dim='station')
-    # print(slope.load())
+    # Robust regression
+    new_sources = []
+    for reg_source in ['ERA5', 'ERA5_scaled']:
+        slope, intercept = helper.RLM(da_i.sel(source='MIDAS'),
+                                    da_i.sel(source=reg_source),
+                                    dim='station')
+        reg_line = intercept + slope * da_i.sel(source='MIDAS')
+        source_name = reg_source + '_rlm'
+        reg_line = reg_line.expand_dims('source')
+        reg_line.coords['source'] = [source_name]
+        new_sources.append(reg_line)
+    da_i = xr.concat([da_i] + new_sources, dim='source')
+    print(da_i)
+
     df_i = da_i.to_dataframe()
     # Split intensities in two columns, one for each source
     da_list = []
-    for source in ['MIDAS', 'ERA5', 'ERA5_scaled']:
+    for source in da_i['source'].values:
+        print(source)
         series_i = df_i.xs(source, level='source').rename(columns={'intensity':source})
         # print(series_i.head())
         da_list.append(series_i)
@@ -1032,11 +1033,12 @@ def scatter_intensity(ds_era, ds_gauges, fig_name):
     # Plot some durations on facetgrid
     dur_sel = [1,6,24,240]
     df_i_s = df_i_s.loc[np.in1d(df_i_s['duration'], dur_sel)]
-    # print(df_i_s.head())
+    print(df_i_s.head())
     fg = sns.FacetGrid(df_i_s, sharex=False, sharey=False, row='T', col='duration')
     fg = fg.map(plt.scatter, 'MIDAS', 'ERA5')
-    # fg = fg.map(plt.scatter, 'MIDAS', 'ERA5')
-    # fg = fg.map(sns.regplot, 'MIDAS', 'ERA5_scaled', color='r')
+    fg = fg.map(plt.plot, 'MIDAS', 'ERA5_rlm')
+    fg = fg.map(plt.scatter, 'MIDAS', 'ERA5_scaled', color='r')
+    fg = fg.map(plt.plot, 'MIDAS', 'ERA5_scaled_rlm', color='r')
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
 
 
@@ -1075,7 +1077,7 @@ def main():
     # plot_scaling_per_site(ds_combined, 'sites_scaling_select_1979-2018-11sites.pdf')
 
     ##############
-    # scatter_intensity(ds_era, ds_midas, 'scatter_intensity.pdf')
+    scatter_intensity(ds_era, ds_midas, 'scatter_intensity.pdf')
 
 
     # single_map(ds_era['scaling_pearsonr'],
