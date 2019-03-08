@@ -66,6 +66,11 @@ def convert_lon(longitude):
     # return np.where(longitude < 0, longitude + 360, longitude)
 
 
+def set_logd_xticks(ax):
+    ax.set_xticks(XTICKS)
+    ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+
+
 def single_map(da, cbar_label, title, fig_name, center=None, reverse=False):
     """https://cbrownley.wordpress.com/2018/05/15/visualizing-global-land-temperatures-in-python-with-scrapy-xarray-and-cartopy/
     """
@@ -235,9 +240,7 @@ def plot_scaling_per_site(ds, fig_name):
 
     # set ticks
     for ax in sites_ax_list:
-        ax.set_xticks(XTICKS)
-        ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
-    for ax in sites_ax_list:
+        set_logd_xticks(ax)
         ax.margins(x=5)
 
     # plt.legend(lines, labels, loc='lower center', ncol=4)
@@ -554,8 +557,7 @@ def fig_scaling_differences_all(ds_era, ds_midas, fig_name):
 
     # set ticks
     for ax in axes.flat:
-        ax.set_xticks(XTICKS)
-        ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+        set_logd_xticks(ax)
 
     # add a big axes, hide frame
     # fig.add_subplot(111, frameon=False)
@@ -602,8 +604,7 @@ def plot_scaling_differences(param, df_list, ax, ylim=False):
     if ylim:
         ax.set_ylim(ylim[param])
     # ax.set_yticks([ 0.0, 0.5])
-    ax.set_xticks(XTICKS)
-    ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+    set_logd_xticks(ax)
     ax.set_xlabel('$d$ (hours)')
     ylabel = '$\log_{{10}}( {i}d^{g} / {p} )$'.format(g=gradient_symbols[param],
                                                         p=param_symbols[param],
@@ -848,8 +849,7 @@ def fig_midas_mean(ds_pairs, fig_name):
 
     # set ticks
     for ax in ax_list:
-        ax.set_xticks(XTICKS)
-        ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+        set_logd_xticks(ax)
 
     lgd = fig.legend(lines, labels, loc='lower center', ncol=3)
     plt.tight_layout()
@@ -876,15 +876,47 @@ def scatter_intensity(da_i, fig_name):
     df_i_s = df_i_s.loc[np.in1d(df_i_s['duration'], dur_sel)]
     print(df_i_s.head())
     fg = sns.FacetGrid(df_i_s, sharex=False, sharey=False, row='T', col='duration')
-    fg = fg.map(plt.plot, 'MIDAS', 'ERA5_scaled_rlm', color='r')
-    fg = fg.map(plt.scatter, 'MIDAS', 'ERA5_scaled', color='r')
-    fg = fg.map(plt.plot, 'MIDAS', 'ERA5_rlm')
-    fg = fg.map(plt.scatter, 'MIDAS', 'ERA5')
+    fg = fg.map(plt.plot, 'ERA5_scaled_rlm', 'MIDAS', color='r')
+    fg = fg.map(plt.scatter, 'ERA5_scaled', 'MIDAS', color='r')
+    fg = fg.map(plt.plot, 'ERA5_rlm', 'MIDAS')
+    fg = fg.map(plt.scatter, 'ERA5', 'MIDAS')
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
 
 
-def plot_ARF(ds, fig_name):
-    pass
+def plot_ARF(da, fig_name):
+    width = 7
+    aspect = 1.2
+    col_wrap = 3
+    height = (6/aspect)/col_wrap
+    da = da.drop(['MIDAS', 'ERA5', 'ERA5_scaled'], dim='source')
+    df = da.to_dataset(dim='source').to_dataframe().reset_index()
+    print(df.head())
+    # Plot on facetgrid
+    fg = sns.FacetGrid(df, sharex=True, sharey=True, col='T', col_wrap=col_wrap, aspect=aspect, height=height)
+    fg = fg.map(plt.axhline, y=1, color='0.8', linewidth=1.).set(xscale = 'log')
+    fg = fg.map(plt.plot, 'duration', 'ERA5_scaled_rlm', color='r').set(xscale = 'log')
+    fg = fg.map(plt.plot, 'duration', 'ERA5_rlm').set(xscale = 'log')
+    for ax in fg.axes.flatten():
+        set_logd_xticks(ax)
+    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+
+
+def plot_MAE_intensities(da, fig_name):
+    width = 7
+    aspect = 1.2
+    col_wrap = 3
+    height = (6/aspect)/col_wrap
+    da = da.drop(['MIDAS', 'ERA5_rlm', 'ERA5_scaled_rlm'], dim='source')
+    df = da.to_dataset(dim='source').to_dataframe().reset_index()
+    print(df.head())
+    # Plot on facetgrid
+    fg = sns.FacetGrid(df, sharex=True, sharey=True, col='T', col_wrap=col_wrap, aspect=aspect, height=height)
+    fg = fg.map(plt.plot, 'duration', 'ERA5_scaled', color='r').set(xscale = 'log')
+    fg = fg.map(plt.plot, 'duration', 'ERA5').set(xscale = 'log')
+    for ax in fg.axes.flatten():
+        set_logd_xticks(ax)
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOT_DIR, fig_name))
 
 
 def main():
@@ -922,8 +954,11 @@ def main():
     # plot_scaling_per_site(ds_combined, 'sites_scaling_select_1979-2018-11sites.pdf')
 
     ##############
-    da_i = postprocessing.estimate_intensities(ds_era, ds_midas)
-    scatter_intensity(da_i, 'scatter_intensity.pdf')
+    ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)
+    print(ds_i)
+    # scatter_intensity(ds_i['intensity'], 'scatter_intensity.pdf')
+    plot_ARF(ds_i['arf'], 'arf_scaling.pdf')
+    plot_MAE_intensities(ds_i['mae'], 'MAE_intensities.pdf')
 
 
     # single_map(ds_era['scaling_pearsonr'],

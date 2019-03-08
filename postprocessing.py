@@ -247,7 +247,6 @@ def estimate_intensities(ds_era, ds_gauges):
         ds.coords['source'] = [name]
         ds_list.append(ds)
     ds = xr.merge(ds_list)
-    # print(ds)
 
     # GEV param from scaling
     sel_dict = dict(source='ERA5', ev_param=['location', 'scale'])
@@ -280,22 +279,28 @@ def estimate_intensities(ds_era, ds_gauges):
         da_list.append(intensity)
     da_i = xr.concat(da_list, dim='T').drop(['ci'])
     ds_i = da_i.to_dataset()
-    print(ds_i)
 
-    # Robust regression
+    # Robust regression and MAE
     new_sources = []
     for reg_source in ['ERA5', 'ERA5_scaled']:
-        slope = helper.RLM_slope(da_i.sel(source='MIDAS'),
-                                    da_i.sel(source=reg_source),
-                                    dim='station')
-        reg_line = slope * da_i.sel(source='MIDAS')
-        source_name = reg_source + '_rlm'
-        reg_line = reg_line.expand_dims('source')
-        reg_line.coords['source'] = [source_name]
-        new_sources.append(reg_line)
-    da_i = xr.concat([da_i] + new_sources, dim='source')
-    print(da_i)
-    return da_i
+        i_midas = da_i.sel(source='MIDAS')
+        i_source = da_i.sel(source=reg_source)
+        slope = helper.RLM_slope(i_midas, i_source, dim='station')
+        slope = slope.rename('arf').expand_dims('source')
+        slope.coords['source'] = [reg_source]
+
+        reg_line = slope * i_midas
+        rlm_name = reg_source + '_rlm'
+        reg_line = reg_line.rename('intensity').transpose(*da_i.dims)
+        reg_line.coords['source'] = [rlm_name]
+        # MAE
+        mae = np.abs(i_source - i_midas).mean(dim='station').rename('mae')
+        mae = mae.expand_dims('source')
+        mae.coords['source'] = [reg_source]
+        ds = xr.merge([slope, reg_line, mae])
+        new_sources.append(ds)
+    ds = xr.auto_combine([ds_i] + new_sources, concat_dim='source')
+    return ds
 
 
 def main():
