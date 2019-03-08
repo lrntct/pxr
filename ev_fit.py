@@ -179,7 +179,7 @@ def gen_bvalue(ecdf, ams, n_obs, order, axis):
     return bvalue
 
 
-@nb.jit()
+@nb.njit()
 def gev_pwm(ams, ecdf, n_obs, ax_year, shape=None):
     """Fit the GEV using the Method of Probability-Weighted Moments.
     EV type II when shape<0.
@@ -190,8 +190,8 @@ def gev_pwm(ams, ecdf, n_obs, ax_year, shape=None):
     Technometrics, 27(3), 251–261.
     https://doi.org/10.1080/00401706.1985.10488049
     """
-    b0 = np.mean(ams, axis=ax_year)
-    # b0 = gen_bvalue(ecdf, ams, n_obs, iscalar(0), ax_year)
+    # b0 = np.mean(ams, axis=ax_year)
+    b0 = gen_bvalue(ecdf, ams, n_obs, iscalar(0), ax_year)
     b1 = gen_bvalue(ecdf, ams, n_obs, iscalar(1), ax_year)
     l1 = b0
     l2 = iscalar(2) * b1 - b0
@@ -209,13 +209,23 @@ def gev_pwm(ams, ecdf, n_obs, ax_year, shape=None):
     return arr_loc, arr_scale, arr_shape
 
 
-def gev_from_samples(arr_ams, ax_year, sampling_idx, n_obs, shape_param):
+@nb.jit()
+def gev_from_samples(arr_ams, n_sample, shape_param):
     """draw sample with replacement and find GEV parameters using the
     Probability-Weighted Moments method.
     """
+    assert arr_ams.ndim == 1
+    # Remove NaN
+    arr_ams = arr_ams[np.isfinite(arr_ams)]
+    # Records length is exclusive of NaN
+    n_obs = len(arr_ams)
+    # print('n_obs', n_obs)
+    # Random sampling with replacement of indices
+    sampling_idx = helper.get_sampling_idx(n_sample, n_obs)
     # Draw samples. Add dimension n_sample in first position.
     arr_samples = arr_ams[sampling_idx]
-    ax_year += 1
+    # print(arr_samples.shape)
+    ax_year = 1
     # rank samples
     rank = bottleneck.nanrankdata(arr_samples, axis=ax_year).astype(fscalar)
     # fit distribution. ev_apams is a tuple of ndarrays.
@@ -225,13 +235,14 @@ def gev_from_samples(arr_ams, ax_year, sampling_idx, n_obs, shape_param):
     return np.array(ev_params)
 
 
-def gev_func(arr_ams, ax_year, sampling_idx, n_obs, q_levels, shape_param):
+@nb.jit()
+def gev_func(arr_ams, n_sample, q_levels, shape_param):
     """Estimate the GEV parameters and their confidence interval using the bootstrap method.
     The last row of sample idx is the original order, for the actual parameters estimates.
     arr_ams is one-dimensional
     """
     # Find GEV parameters
-    ev_params = gev_from_samples(arr_ams, ax_year, sampling_idx, n_obs, shape_param)
+    ev_params = gev_from_samples(arr_ams, n_sample, shape_param)
     # Get the parameters from the original sample order (last sample)
     orig_params = np.expand_dims(ev_params[:, -1], axis=0)
     # get confidence interval. Changes shape to (quantiles, ev_params)
@@ -243,17 +254,12 @@ def gev_func(arr_ams, ax_year, sampling_idx, n_obs, q_levels, shape_param):
 def fit_gev(ds, dtype, n_sample=500, ci_range=[0.95], shape=None):
     """Fit the GEV
     """
-    # Random sampling of indices, shared across all cells
-    n_obs = len(ds['year'])
-    sampling_idx = helper.get_sampling_idx(n_sample, n_obs)
     # Estimate parameters and CI
     q_levels = helper.ci_range_to_qlevels(ci_range)
     da_ci = xr.apply_ufunc(
         gev_func,
         ds['annual_max'],
-        kwargs={'sampling_idx': sampling_idx,
-                'ax_year': 0,
-                'n_obs': n_obs,
+        kwargs={'n_sample': n_sample,
                 'q_levels': q_levels,
                 'shape_param': shape},
         input_core_dims=[['year']],

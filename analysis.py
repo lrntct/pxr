@@ -209,27 +209,30 @@ def main():
         to_zarr(ds_ranked, path_ranked)
 
         ## For the next steps, use dask distributed LocalCluster (uses processes instead of threads)
-        cluster = LocalCluster(n_workers=32, threads_per_worker=1)
-        print(cluster)
-        client = Client(cluster)
+        # cluster = LocalCluster(n_workers=1, threads_per_worker=1)
+        # print(cluster)
+        # client = Client(cluster)
 
         ## fit EV ##
-        # print('## Fit EV: {} ##'.format(datetime.now()))
-        # ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT]
-        # ds_gev = step23_fit_gev_with_ci(ds_ranked, BS_SAMPLE)
-        # to_zarr(ds_gev, path_gev)
+        print('## Fit EV: {} ##'.format(datetime.now()))
+        ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT]
+        ds_gev = step23_fit_gev_with_ci(ds_ranked, BS_SAMPLE)
+        to_zarr(ds_gev, path_gev)
 
         ## GoF ##
-        # print('## Goodness of fit: {} ##'.format(datetime.now()))
-        # ds_gev = xr.open_zarr(path_gev)
-        # ds_gof = step24_goodness_of_fit(ds_gev, chunk_size)
-        # to_zarr(ds_gof, path_gof)
+        print('## Goodness of fit: {} ##'.format(datetime.now()))
+        ds_gev = xr.open_zarr(path_gev)
+        ds_gof = step24_goodness_of_fit(ds_gev, chunk_size)
+        to_zarr(ds_gof, path_gof)
 
         ## Scaling ##
-        # print('## Scaling: {} ##'.format(datetime.now()))
-        # ds_gof = xr.open_zarr(path_gof)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
-        # ds_scaling = step3_scaling_with_ci(ds_gof, BS_SAMPLE)
-        # to_zarr(ds_scaling, path_scaling)
+        print('## Scaling: {} ##'.format(datetime.now()))
+        ds_gof = xr.open_zarr(path_gof)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
+        ds_scaling = step3_scaling_with_ci(ds_gof, BS_SAMPLE)
+        # print(ds_scaling)
+        # nan_count = np.isnan(ds_scaling['gev_scaling'].sel(ci='0.005', ev_param='scale', scaling_param='slope')).load()
+        # print(nan_count)
+        to_zarr(ds_scaling, path_scaling)
 
 
 if __name__ == "__main__":

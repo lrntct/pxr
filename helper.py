@@ -98,9 +98,24 @@ def RLM(x, y, dim=None):
         )
     return slope, intercept
 
+samples_dict = {}
 
+# @nb.jit()
 def get_sampling_idx(n_sample, n_obs):
-    sampling_idx = np.random.randint(n_obs, size=(n_sample, n_obs), dtype='uint16')
+    """Draw n index sample with replacement.
+    Keep the drawn index in a dict of sample from the same size.
+    If a sample from the size allready exists, return it.
+    If not, draw the sample and keep it in the dict.
+    Add the original sample as the last sample.
+    """
+    sample_size = (n_sample, n_obs)
+    try:
+        sampling_idx = samples_dict[sample_size]
+        # print('Taken sample from dict')
+    except KeyError:
+        # print('draw sample')
+        sampling_idx = np.random.randint(n_obs, size=sample_size, dtype='uint16')
+        samples_dict[sample_size] = sampling_idx
     # Add the original order as the last sample
     idx_orig = np.arange(n_obs, dtype='uint16')
     idx_orig = np.expand_dims(idx_orig, axis=0)
