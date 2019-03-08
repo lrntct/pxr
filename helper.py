@@ -83,6 +83,14 @@ def RLM_func(x, y, robust_norm):
     return slope, intercept
 
 
+def RLM_func_slope_only(x, y, robust_norm):
+    """Fit a robust regression line.
+    """
+    rlm_model = sm.RLM(y, x, M=robust_norm)
+    rlm_results = rlm_model.fit()
+    return rlm_results.params[0]
+
+
 def RLM(x, y, dim=None):
     """Fit a regression line using the Least Trimmed Squares.
     """
@@ -97,6 +105,24 @@ def RLM(x, y, dim=None):
         dask='allowed',
         )
     return slope, intercept
+
+
+def RLM_slope(x, y, dim=None):
+    """Fit a regression line using the Least Trimmed Squares.
+    """
+    robust_norm = sm.robust.norms.TrimmedMean()
+    slope = xr.apply_ufunc(
+        RLM_func_slope_only,
+        x, y,
+        kwargs={'robust_norm': robust_norm},
+        vectorize=True,
+        input_core_dims=[[dim], [dim]],
+        output_core_dims=[[]],
+        dask='allowed',
+        )
+    return slope
+
+
 
 samples_dict = {}
 

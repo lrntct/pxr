@@ -23,11 +23,12 @@ import matplotlib.pyplot as plt
 
 import ev_quantiles
 import helper
+import postprocessing
 
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
 # HOURLY_FILE = 'era5_2000-2012_precip.zarr'
-ERA_AMS_FILE = 'era5_1979-2018_ams_scaling2.zarr'
+ERA_AMS_FILE = 'era5_1979-2018_ams_scaling.zarr'
 MIDAS_AMS_FILE = '../data/MIDAS/midas_1979-2018_ams_scaling.zarr'
 PLOT_DIR = '../plot'
 
@@ -45,8 +46,8 @@ STUDY_SITES = {'Jakarta': (-6.2, 106.816), 'Sydney': (-33.865, 151.209),
                'Beijing': (39.92, 116.38), 'New Delhi': (28.614, 77.21),
                'Jeddah': (21.54, 39.173), 'Niamey': (13.512, 2.125),
                'Nairobi': (-1.28, 36.82), 'Brussels': (50.85, 4.35),
-               'Santiago': (-33.45, -70.67+360), 'New York City': (40.72, -74.0+360),
-               'Mexico City': (19.43, -99.13+360)
+               'Santiago': (-33.45, -70.67), 'New York City': (40.72, -74.0),
+               'Mexico City': (19.43, -99.13)
                }
 
 XTICKS = [1, 3, 6, 12, 24, 48, 120, 360]
@@ -150,97 +151,6 @@ def get_site_list(ds, name_col, use_only=None):
     return sites
 
 
-def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
-    """
-    """
-    if not ds_cont and not ds_cont:
-        raise ValueError('No Dataset provided')
-
-    keep_vars = ['gev', 'gev_scaling']
-
-    # Extract sites values from the datasets. combine all ds along a new 'source' dimension
-    ds_site_list = []
-    for site_name, site_coord in list(site_list.items()):
-        print(site_name)
-        ds_site_sources = []
-        # Select site on continous ds
-        if ds_cont:
-            for ds_name, ds in ds_cont.items():
-                ds_cont_extract = (ds.sel(latitude=site_coord[0],
-                                          longitude=convert_lon(site_coord[1]),
-                                          method='nearest')
-                                    # .drop(drop_coords)
-                                    [keep_vars])
-                ds_cont_extract = ds_cont_extract.expand_dims(['station','source'])
-                ds_cont_extract.coords['station'] = [site_name]
-                ds_cont_extract.coords['source'] = [ds_name]
-                ds_site_sources.append(ds_cont_extract)
-        # Add point ds
-        if ds_points:
-            for ds_name, (ds, name_col) in ds_points.items():
-                ds.coords['station'] = ds[name_col]
-                ds_pt_extract = (ds.sel(station=site_name)
-                                 .drop(drop_coords + [name_col])
-                                 [keep_vars])
-                ds_pt_extract.coords['station'] = [site_name]
-                ds_pt_extract.coords['source'] = [ds_name]
-                ds_site_sources.append(ds_pt_extract)
-        # Concatenate all sites along the source dimension
-        ds_all_sources = xr.concat(ds_site_sources, dim='source')
-        ds_site_list.append(ds_all_sources)
-
-    # Concat all along the 'station' dimension
-    ds_all = xr.concat(ds_site_list, dim='station')
-    # Calculate regression lines
-    sel_dict = dict(ev_param=['location', 'scale'])
-    slope = ds_all['gev_scaling'].sel(scaling_param='slope', **sel_dict)
-    intercept = ds_all['gev_scaling'].sel(scaling_param='intercept', **sel_dict)
-    params_from_scaling = (10**intercept) * ds_all['duration']**slope
-    # Add non-scaled shape
-    da_shape = ds_all['gev'].sel(ev_param='shape').expand_dims(['ev_param'])
-    da_shape.coords['ev_param'] = ['shape']
-    ds_all['gev_scaled'] = xr.concat([params_from_scaling, da_shape], dim='ev_param').transpose(*ds_all['gev'].dims)
-    return ds_all
-
-
-def ds_to_df(ds, station_coord):
-    # Create a dict of Pandas DF {'site': DF} with the df col prefixed with the source
-    # print(ds)
-    dict_df = {}
-    for station in ds[station_coord].values:
-        df_list = []
-        for source in ds['source'].values:
-            # get scale and location
-            locator = {station_coord: station,
-                       'source': source,
-                       'ci': 'estimate',
-                       'ev_param': ['location', 'scale']}
-            ds_extract = ds.sel(**locator).drop(['gev_scaling', 'scaling_param'])
-            # print(ds_extract)
-            # expand the gev params to ds
-            ds_gev_params = ds_extract['gev'].to_dataset(dim='ev_param')
-            df = ds_gev_params.to_dataframe()
-            rename_rules = {'location': '{}_location'.format(source),
-                            'scale': '{}_scale'.format(source)}
-            df.rename(columns=rename_rules, inplace=True)
-            # print(df.head())
-            df_list.append(df)
-            # Get values from regression
-            ds_gev_params = ds_extract['gev_scaled'].to_dataset(dim='ev_param')
-            df2 = ds_gev_params.to_dataframe()
-            rename_rules = {
-                'location': '{}_location_lr'.format(source),
-                'scale': '{}_scale_lr'.format(source)
-                }
-            df2.rename(columns=rename_rules, inplace=True)
-            df_list.append(df2)
-            # print(df)
-        df_all = pd.concat(df_list, axis=1, sort=False)
-        # print(df_all.head())
-        dict_df[station] =  df_all
-    return dict_df
-
-
 def plot_point_map(ds, ax):
     ds_sel = ds.sel(duration=ds.duration.values[0],
                     source=ds.source.values[0],)
@@ -281,7 +191,7 @@ def plot_scaling_per_site(ds, fig_name):
         #                       color=C_SECONDARY_2, label='$bd^\\beta$ (daily)'),
                 }
 
-    dict_df = ds_to_df(ds, 'station')
+    dict_df = postprocessing.ds_to_df(ds, 'station')
     col_num = 3
     row_num = math.ceil(len(dict_df) / col_num)
     fig_size = (7, 7)
@@ -838,7 +748,7 @@ def prepare_midas_mean(ds_era, ds_midas, ds_midas_mean):
 
 
 def fig_midas_mean(ds_pairs, fig_name):
-    dict_df = ds_to_df(ds_pairs, 'pair')
+    dict_df = postprocessing.ds_to_df(ds_pairs, 'pair')
     # # From seaborn colorblind
     # C = ['#0173b2', '#de8f05', '#029e73', '#cc78bc']
     C = {'ERA5': C_PRIMARY_1, 'MIDAS mean': C_PRIMARY_2,
@@ -948,83 +858,14 @@ def fig_midas_mean(ds_pairs, fig_name):
     plt.close()
 
 
-def scatter_intensity(ds_era, ds_gauges, fig_name):
+def scatter_intensity(da_i, fig_name):
     """
     """
-    # keep only stations with coordinates
-    ds_gauges = ds_gauges.reset_coords(['latitude', 'longitude'])
-    gauges_sel = np.logical_and(np.isfinite(ds_gauges['latitude']), np.isfinite(ds_gauges['longitude']))
-    ds_gauges = ds_gauges.where(gauges_sel, drop=True)
-    # Convert gauges longitudes
-    ds_gauges['longitude'] = convert_lon(ds_gauges['longitude'])
-    # Select the cells above the stations
-    ds_era_sel = ds_era.sel(latitude=ds_gauges['latitude'],
-                            longitude=ds_gauges['longitude'],
-                            method='nearest')
-    ds_list = []
-    # print(ds_era_sel['longitude'])
-    # print(ds_gauges['longitude'])
-    for ds, name in zip([ds_era_sel, ds_gauges], ['ERA5', 'MIDAS']):
-        # Delete coordinates (no longer used)
-        ds = ds.drop(['latitude', 'longitude', 'src_name'])
-        # Merge the two datasets along a new dimension
-        ds = ds.expand_dims('source')
-        ds.coords['source'] = [name]
-        ds_list.append(ds)
-    ds = xr.merge(ds_list)
-    # print(ds)
-
-    # GEV param from scaling
-    sel_dict = dict(source='ERA5', ev_param=['location', 'scale'])
-    slope = ds['gev_scaling'].sel(scaling_param='slope', **sel_dict)
-    intercept = ds['gev_scaling'].sel(scaling_param='intercept', **sel_dict)
-    params_from_scaling = (10**intercept) * ds['duration']**slope
-    params_from_scaling = params_from_scaling.expand_dims('source')#.drop('scaling_param')
-    params_from_scaling.coords['source'] = ['ERA5_scaled']
-    # Add non-scaled shape.
-    # print(params_from_scaling)
-    da_shape =  ds['gev'].sel(source='ERA5', ev_param='shape')
-    da_shape = da_shape.expand_dims(['source', 'ev_param'])
-    da_shape.coords['source'] = ['ERA5_scaled']
-    da_shape.coords['ev_param'] = ['shape']
-    # print(da_shape)
-    params_from_scaling = xr.concat([params_from_scaling, da_shape], dim='ev_param')
-    # print(params_from_scaling)
-    gev_params = xr.concat([params_from_scaling, ds['gev']], dim='source')
-    # print(gev_params)
-
-    # calculate intensity for given duration and return period
-    da_list = []
-    for T in [2,10,50,100,500,1000]:
-        loc = gev_params.sel(ev_param='location', ci='estimate')
-        scale = gev_params.sel(ev_param='scale', ci='estimate')
-        shape = gev_params.sel(ev_param='shape', ci='estimate')
-        intensity = ev_quantiles.gev_quantile(T, loc, scale, shape).rename('intensity')
-        intensity = intensity.expand_dims('T')
-        intensity.coords['T'] = [T]
-        da_list.append(intensity)
-    da_i = xr.concat(da_list, dim='T').drop(['ci'])
-    # print(da_i)
-
-    # Robust regression
-    new_sources = []
-    for reg_source in ['ERA5', 'ERA5_scaled']:
-        slope, intercept = helper.RLM(da_i.sel(source='MIDAS'),
-                                    da_i.sel(source=reg_source),
-                                    dim='station')
-        reg_line = intercept + slope * da_i.sel(source='MIDAS')
-        source_name = reg_source + '_rlm'
-        reg_line = reg_line.expand_dims('source')
-        reg_line.coords['source'] = [source_name]
-        new_sources.append(reg_line)
-    da_i = xr.concat([da_i] + new_sources, dim='source')
     print(da_i)
-
     df_i = da_i.to_dataframe()
     # Split intensities in two columns, one for each source
     da_list = []
     for source in da_i['source'].values:
-        print(source)
         series_i = df_i.xs(source, level='source').rename(columns={'intensity':source})
         # print(series_i.head())
         da_list.append(series_i)
@@ -1035,11 +876,15 @@ def scatter_intensity(ds_era, ds_gauges, fig_name):
     df_i_s = df_i_s.loc[np.in1d(df_i_s['duration'], dur_sel)]
     print(df_i_s.head())
     fg = sns.FacetGrid(df_i_s, sharex=False, sharey=False, row='T', col='duration')
-    fg = fg.map(plt.scatter, 'MIDAS', 'ERA5')
-    fg = fg.map(plt.plot, 'MIDAS', 'ERA5_rlm')
-    fg = fg.map(plt.scatter, 'MIDAS', 'ERA5_scaled', color='r')
     fg = fg.map(plt.plot, 'MIDAS', 'ERA5_scaled_rlm', color='r')
+    fg = fg.map(plt.scatter, 'MIDAS', 'ERA5_scaled', color='r')
+    fg = fg.map(plt.plot, 'MIDAS', 'ERA5_rlm')
+    fg = fg.map(plt.scatter, 'MIDAS', 'ERA5')
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
+
+
+def plot_ARF(ds, fig_name):
+    pass
 
 
 def main():
@@ -1073,11 +918,12 @@ def main():
 
     # fig_gauges_map('midas_gauges_map.pdf')
 
-    # ds_combined = combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
+    # ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
     # plot_scaling_per_site(ds_combined, 'sites_scaling_select_1979-2018-11sites.pdf')
 
     ##############
-    scatter_intensity(ds_era, ds_midas, 'scatter_intensity.pdf')
+    da_i = postprocessing.estimate_intensities(ds_era, ds_midas)
+    scatter_intensity(da_i, 'scatter_intensity.pdf')
 
 
     # single_map(ds_era['scaling_pearsonr'],
