@@ -24,10 +24,8 @@ DATA_DIR_MIDAS = '../data/MIDAS/'
 HOURLY_ERA5 = 'era5_1979-2018_precip.zarr'
 HOURLY_MIDAS = 'midas_1979-2018_precip_select.zarr'
 
-AMS_ERA5 = 'era5_1979-2018_ams.zarr'
-AMS_MIDAS = 'midas_1979-2018_ams.zarr'
-ANNUAL_ERA5_BASENAME = 'era5_1979-2018_ams_{}.zarr'
-ANNUAL_MIDAS_BASENAME = 'midas_1979-2018_ams_{}.zarr'
+AMS_BASENAME = '{}_1979-2018_ams.zarr'
+ANNUAL_BASENAME = '{}_{}-{}_ams_{}.zarr'
 
 
 # Extract
@@ -156,40 +154,37 @@ def to_zarr(ds, path):
 
 def main():
     # Select the source ('ERA5' or 'MIDAS')
-    SOURCE = 'MIDAS'
+    SOURCE = 'era5'
     BS_SAMPLE = 1000
+    START = 2000
+    END = 2018
 
-    if SOURCE == 'ERA5':
+    if SOURCE == 'era5':
         temp_res = 1  # temporal resolution in hours
         precip_var = 'precipitation'
         time_var = 'time'
         data_dir = DATA_DIR_ERA
         hourly_path = os.path.join(data_dir, HOURLY_ERA5)
-        ams_path = os.path.join(data_dir, AMS_ERA5)
-        path_ranked = os.path.join(data_dir, ANNUAL_ERA5_BASENAME.format('ranked'))
-        path_gev = os.path.join(data_dir, ANNUAL_ERA5_BASENAME.format('gev'))
-        path_gof = os.path.join(data_dir, ANNUAL_ERA5_BASENAME.format('gof'))
-        path_scaling = os.path.join(data_dir, ANNUAL_ERA5_BASENAME.format('scaling2'))
         chunk_size = ERA5_CHUNKS
-    elif SOURCE == 'MIDAS':
+    elif SOURCE == 'midas':
         temp_res = 1  # temporal resolution in hours
         precip_var = 'prcp_amt'
         time_var = 'end_time'
         data_dir = DATA_DIR_MIDAS
         hourly_path = os.path.join(data_dir, HOURLY_MIDAS)
-        ams_path = os.path.join(data_dir, AMS_MIDAS)
-        path_ranked = os.path.join(data_dir, ANNUAL_MIDAS_BASENAME.format('ranked'))
-        path_gev = os.path.join(data_dir, ANNUAL_MIDAS_BASENAME.format('gev'))
-        path_gof = os.path.join(data_dir, ANNUAL_MIDAS_BASENAME.format('gof'))
-        path_scaling = os.path.join(data_dir, ANNUAL_MIDAS_BASENAME.format('scaling'))
         chunk_size = MIDAS_CHUNKS
     else:
         raise KeyError('Unknown source: {}'.format(SOURCE))
 
+    ams_path = os.path.join(data_dir, AMS_BASENAME.format(SOURCE))
+    path_ranked = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'ranked'))
+    path_gev = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'gev'))
+    path_gof = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'gof'))
+    path_scaling = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'scaling'))
+
     with ProgressBar():
         # Get annual maxima #
-        # print('## AMS: {} ##'.format(datetime.now()))
-        # hourly = xr.open_zarr(hourly_path)
+        print('## AMS: {} ##'.format(datetime.now()))
         # ams = step1_annual_maxs_of_roll_mean(hourly, precip_var, time_var, DURATIONS_ALL, temp_res).chunk(chunk_size)
         # print(ams)
         # to_zarr(ams, ams_path)
@@ -201,17 +196,16 @@ def main():
 
 
         ## Rank # For unknown reason Dask distributed create buggy ECDF.
-        ams = xr.open_zarr(ams_path)
-        print(ams)
-        print('## Rank: {} ##'.format(datetime.now()))
-        ds_ranked = step22_rank_ecdf(ams, chunk_size)
-        print(ds_ranked)
-        to_zarr(ds_ranked, path_ranked)
+        # ams = xr.open_zarr(ams_path).sel(year=slice(START, END))
+        # print('## Rank: {} ##'.format(datetime.now()))
+        # ds_ranked = step22_rank_ecdf(ams, chunk_size)
+        # print(ds_ranked)
+        # to_zarr(ds_ranked, path_ranked)
 
         ## For the next steps, use dask distributed LocalCluster (uses processes instead of threads)
-        # cluster = LocalCluster(n_workers=1, threads_per_worker=1)
-        # print(cluster)
-        # client = Client(cluster)
+        cluster = LocalCluster(n_workers=32, threads_per_worker=1)
+        print(cluster)
+        client = Client(cluster)
 
         ## fit EV ##
         print('## Fit EV: {} ##'.format(datetime.now()))
@@ -229,9 +223,9 @@ def main():
         print('## Scaling: {} ##'.format(datetime.now()))
         ds_gof = xr.open_zarr(path_gof)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
         ds_scaling = step3_scaling_with_ci(ds_gof, BS_SAMPLE)
-        # print(ds_scaling)
-        # nan_count = np.isnan(ds_scaling['gev_scaling'].sel(ci='0.005', ev_param='scale', scaling_param='slope')).load()
-        # print(nan_count)
+        print(ds_scaling)
+        nan_count = np.isnan(ds_scaling['gev_scaling'].sel(ci='0.005', ev_param='scale', scaling_param='slope')).load()
+        print(nan_count)
         to_zarr(ds_scaling, path_scaling)
 
 
