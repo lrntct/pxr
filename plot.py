@@ -870,7 +870,6 @@ def fig_midas_mean(ds_pairs, fig_name):
 def scatter_intensity(da_i, fig_name):
     """
     """
-    print(da_i)
     df_i = da_i.to_dataframe()
     # Split intensities in two columns, one for each source
     da_list = []
@@ -883,12 +882,17 @@ def scatter_intensity(da_i, fig_name):
     # Plot some durations on facetgrid
     dur_sel = [1,6,24,240]
     df_i_s = df_i_s.loc[np.in1d(df_i_s['duration'], dur_sel)]
-    print(df_i_s.head())
     fg = sns.FacetGrid(df_i_s, sharex=False, sharey=False, row='T', col='duration')
-    fg = fg.map(plt.plot, 'ERA5_scaled_rlm', 'MIDAS', color=C_PRIMARY_2)
-    fg = fg.map(plt.scatter, 'ERA5_scaled', 'MIDAS', color=C_PRIMARY_2)
-    fg = fg.map(plt.plot, 'ERA5_rlm', 'MIDAS', color=C_PRIMARY_1)
-    fg = fg.map(plt.scatter, 'ERA5', 'MIDAS', color=C_PRIMARY_1)
+    fg = fg.map(plt.plot, 'ERA5_scaled_rlm', 'MIDAS', color=C_PRIMARY_2, label='ERA5 scaled LTS')
+    fg = fg.map(plt.scatter, 'ERA5_scaled', 'MIDAS', color=C_PRIMARY_2, label='ERA5 scaled')
+    fg = fg.map(plt.plot, 'ERA5_rlm', 'MIDAS', color=C_PRIMARY_1, label='ERA5 LTS')
+    fg = fg.map(plt.scatter, 'ERA5', 'MIDAS', color=C_PRIMARY_1, label='ERA5')
+    for ax in fg.axes.flatten():
+        lines, labels = ax.get_legend_handles_labels()
+    fig = plt.gcf()
+    lgd = fig.legend(lines, labels, loc='lower center', ncol=4)
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=.04, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
     plt.close()
 
@@ -900,7 +904,6 @@ def plot_ARF(da, fig_name):
     height = (6/aspect)/col_wrap
     da = da.drop(['MIDAS', 'ERA5', 'ERA5_scaled'], dim='source')
     df = da.to_dataset(dim='source').to_dataframe().reset_index()
-    print(df.head())
     # Plot on facetgrid
     fg = sns.FacetGrid(df, sharex=True, sharey=True, col='T', col_wrap=col_wrap, aspect=aspect, height=height)
     fg = fg.map(plt.axhline, y=1, color='0.8', linewidth=1.).set(xscale = 'log')
@@ -995,7 +998,7 @@ def main():
     ##############
     ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)
     # print(ds_i)
-    # scatter_intensity(ds_i['intensity'], 'scatter_intensity.pdf')
+    scatter_intensity(ds_i['intensity'], 'scatter_intensity.pdf')
     # plot_ARF(ds_i['arf'], 'arf_scaling.pdf')
     # plot_intensities_AE(ds_i['mae'], 'MAE (mm/h)', 'MAE_intensities.pdf')
     # plot_intensities_errors_percent(ds_i['mape'], 'MAPE', 'MAPE_intensities.pdf')
