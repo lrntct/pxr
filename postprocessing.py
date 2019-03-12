@@ -297,10 +297,27 @@ def estimate_intensities(ds_era, ds_gauges):
         mae = np.abs(i_source - i_midas).mean(dim='station').rename('mae')
         mae = mae.expand_dims('source')
         mae.coords['source'] = [reg_source]
-        ds = xr.merge([slope, reg_line, mae])
+        # MAPE
+        mape = np.abs((i_midas - i_source) / i_midas).mean(dim='station')
+        mape = mape.expand_dims('source').rename('mape')
+        mape.coords['source'] = [reg_source]
+        # MPE
+        mpe = ((i_midas - i_source) / i_midas).mean(dim='station')
+        mpe = mpe.expand_dims('source').rename('mpe')
+        mpe.coords['source'] = [reg_source]
+        ds = xr.merge([slope, reg_line, mae, mape, mpe])
         new_sources.append(ds)
     ds = xr.auto_combine([ds_i] + new_sources, concat_dim='source')
     return ds
+
+
+def adequacy(da_mape, threshold=.2):
+    for source in ['ERA5', 'ERA5_scaled']:
+        print(source)
+        da_sel = da_mape.sel(source=source).load()
+        da_adequate = da_sel <= threshold
+        adq = da_adequate.where(da_adequate, drop=True)
+        print(adq)
 
 
 def main():

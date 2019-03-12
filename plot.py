@@ -20,6 +20,7 @@ import scipy.stats
 
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 
 import ev_quantiles
 import helper
@@ -190,6 +191,14 @@ def plot_scaling_per_site(ds, fig_name):
                                  color=C_SECONDARY_1, label='$ad^\\alpha$ (all)'),
         'ERA5_scale_lr': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
                               color=C_SECONDARY_2, label='$bd^\\beta$ (all)'),
+        # 'ERA5_location': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
+        #                       color=C_SECONDARY_1, label='Location $\psi$'),
+        # 'ERA5_scale': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
+        #                    color=C_SECONDARY_2, label='Scale $\lambda$'),
+        # 'ERA5_location_lr': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
+        #                          color=C_SECONDARY_1, label='$ad^\\alpha$ (all)'),
+        # 'ERA5_scale_lr': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
+                            #   color=C_SECONDARY_2, label='$bd^\\beta$ (all)'),
         # 'ERA5_location_lr_daily': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
         #                          color=C_SECONDARY_1, label='$ad^\\alpha$ (daily)'),
         # 'ERA5_scale_lr_daily': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
@@ -876,11 +885,12 @@ def scatter_intensity(da_i, fig_name):
     df_i_s = df_i_s.loc[np.in1d(df_i_s['duration'], dur_sel)]
     print(df_i_s.head())
     fg = sns.FacetGrid(df_i_s, sharex=False, sharey=False, row='T', col='duration')
-    fg = fg.map(plt.plot, 'ERA5_scaled_rlm', 'MIDAS', color='r')
-    fg = fg.map(plt.scatter, 'ERA5_scaled', 'MIDAS', color='r')
-    fg = fg.map(plt.plot, 'ERA5_rlm', 'MIDAS')
-    fg = fg.map(plt.scatter, 'ERA5', 'MIDAS')
+    fg = fg.map(plt.plot, 'ERA5_scaled_rlm', 'MIDAS', color=C_PRIMARY_2)
+    fg = fg.map(plt.scatter, 'ERA5_scaled', 'MIDAS', color=C_PRIMARY_2)
+    fg = fg.map(plt.plot, 'ERA5_rlm', 'MIDAS', color=C_PRIMARY_1)
+    fg = fg.map(plt.scatter, 'ERA5', 'MIDAS', color=C_PRIMARY_1)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.close()
 
 
 def plot_ARF(da, fig_name):
@@ -894,29 +904,58 @@ def plot_ARF(da, fig_name):
     # Plot on facetgrid
     fg = sns.FacetGrid(df, sharex=True, sharey=True, col='T', col_wrap=col_wrap, aspect=aspect, height=height)
     fg = fg.map(plt.axhline, y=1, color='0.8', linewidth=1.).set(xscale = 'log')
-    fg = fg.map(plt.plot, 'duration', 'ERA5_scaled_rlm', color='r').set(xscale = 'log')
-    fg = fg.map(plt.plot, 'duration', 'ERA5_rlm').set(xscale = 'log')
+    fg = fg.map(plt.plot, 'duration', 'ERA5_scaled_rlm', color=C_PRIMARY_2).set(xscale = 'log')
+    fg = fg.map(plt.plot, 'duration', 'ERA5_rlm', color=C_PRIMARY_1).set(xscale = 'log')
     for ax in fg.axes.flatten():
         set_logd_xticks(ax)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.close()
 
 
-def plot_MAE_intensities(da, fig_name):
+def intensities_errors(da):
+    sns.set_style("ticks")
+    sns.set_context("paper")
     width = 7
     aspect = 1.2
     col_wrap = 3
     height = (6/aspect)/col_wrap
     da = da.drop(['MIDAS', 'ERA5_rlm', 'ERA5_scaled_rlm'], dim='source')
     df = da.to_dataset(dim='source').to_dataframe().reset_index()
-    print(df.head())
     # Plot on facetgrid
     fg = sns.FacetGrid(df, sharex=True, sharey=True, col='T', col_wrap=col_wrap, aspect=aspect, height=height)
-    fg = fg.map(plt.plot, 'duration', 'ERA5_scaled', color='r').set(xscale = 'log')
-    fg = fg.map(plt.plot, 'duration', 'ERA5').set(xscale = 'log')
+    fg = fg.map(plt.plot, 'duration', 'ERA5_scaled', color=C_PRIMARY_2, label='ERA5 scaled').set(xscale = 'log')
+    fg = fg.map(plt.plot, 'duration', 'ERA5', color=C_PRIMARY_1, label='ERA5').set(xscale = 'log')
     for ax in fg.axes.flatten():
         set_logd_xticks(ax)
+    return fg
+
+
+def plot_intensities_AE(da, ylabel, fig_name):
+    fg = intensities_errors(da)
+    fg.set_ylabels(ylabel)
+    for ax in fg.axes.flatten():
+        set_logd_xticks(ax)
+        lines, labels = ax.get_legend_handles_labels()
+    fig = plt.gcf()
+    lgd = fig.legend(lines, labels, loc='lower center', ncol=2)
     plt.tight_layout()
+    plt.subplots_adjust(bottom=.22, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.close()
+
+
+def plot_intensities_errors_percent(da, ylabel, fig_name):
+    fg = intensities_errors(da)
+    fg.set_ylabels(ylabel)
+    for ax in fg.axes.flatten():
+        lines, labels = ax.get_legend_handles_labels()
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y)))
+    fig = plt.gcf()
+    lgd = fig.legend(lines, labels, loc='lower center', ncol=2)
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=.22, wspace=None, hspace=None)
+    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.close()
 
 
 def main():
@@ -951,14 +990,17 @@ def main():
     # fig_gauges_map('midas_gauges_map.pdf')
 
     # ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
-    # plot_scaling_per_site(ds_combined, 'sites_scaling_select_1979-2018-11sites.pdf')
+    # plot_scaling_per_site(ds_combined, 'sites_scaling_select_2000-2017-11sites.pdf')
 
     ##############
     ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)
-    print(ds_i)
+    # print(ds_i)
     # scatter_intensity(ds_i['intensity'], 'scatter_intensity.pdf')
-    plot_ARF(ds_i['arf'], 'arf_scaling.pdf')
-    plot_MAE_intensities(ds_i['mae'], 'MAE_intensities.pdf')
+    # plot_ARF(ds_i['arf'], 'arf_scaling.pdf')
+    # plot_intensities_AE(ds_i['mae'], 'MAE (mm/h)', 'MAE_intensities.pdf')
+    # plot_intensities_errors_percent(ds_i['mape'], 'MAPE', 'MAPE_intensities.pdf')
+    postprocessing.adequacy(ds_i['mape'], threshold=.2)
+    # plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
 
 
     # single_map(ds_era['scaling_pearsonr'],
