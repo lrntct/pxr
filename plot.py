@@ -45,10 +45,10 @@ EXTRACT = dict(latitude=slice(45, -45),
 #                'Kisumu': (0.1, 34.75)}
 STUDY_SITES = {'Jakarta': (-6.2, 106.816), 'Sydney': (-33.865, 151.209),
                'Beijing': (39.92, 116.38), 'New Delhi': (28.614, 77.21),
-               'Jeddah': (21.54, 39.173), 'Niamey': (13.512, 2.125), 'Cape Town': (-33.925278, 18.4238),
-               'Nairobi': (-1.28, 36.82), 'Brussels': (50.85, 4.35),
-               'Santiago': (-33.45, -70.67), 'New York City': (40.72, -74.0),
-               'Mexico City': (19.43, -99.13), 'Vancouver': (49.25, -123.1),
+               'Niamey': (13.512, 2.125), #'Jeddah': (21.54, 39.173), 'Cape Town': (-33.925278, 18.4238),
+               'Nairobi': (-1.28, 36.82), #'Brussels': (50.85, 4.35),
+               'Santiago': (-33.45, -70.67), #'New York City': (40.72, -74.0),
+               'Mexico City': (19.43, -99.13),# 'Vancouver': (49.25, -123.1),
                'Natal': (-5.78, -35.2)
                }
 
@@ -201,9 +201,9 @@ def plot_scaling_per_site(ds, fig_name):
 
     dict_df = postprocessing.ds_to_df(ds, 'station')
     # sys.exit()  ###
-    col_num = 3
+    col_num = 2
     row_num = math.ceil(len(dict_df) / col_num)
-    fig_size = (7, 8)
+    fig_size = (6, 9)
     fig = plt.figure(figsize=fig_size)
     ax_num = 1
 
@@ -240,12 +240,6 @@ def plot_scaling_per_site(ds, fig_name):
                 marker=styles['marker'], color=styles['color'])
             # plot error
             if col_prefix.endswith('_lr'):
-                # df[col_ci_l].plot(ax=ax, label=styles['label'],
-                #     title=site_name,
-                #     loglog=True,
-                #     linestyle='dashed', linewidth=styles['linewidth'],
-                #     markersize=styles['markersize'],
-                #     marker=styles['marker'], color=styles['color'])
                 ax.fill_between(df.index, df[col_ci_l], df[col_ci_h],
                         alpha=0.25, label=styles['label'] + ' 95% CI', linewidth=0,
                         color=styles['color'], zorder=0)
@@ -269,11 +263,12 @@ def plot_scaling_per_site(ds, fig_name):
     # set ticks
     for ax in sites_ax_list:
         set_logd_xticks(ax)
-        ax.margins(x=5)
+        ax.use_sticky_edges = False
+        ax.autoscale()
     lgd_ncol = math.ceil(len(labels) / 2)
     lgd = fig.legend(lines, labels, loc='lower center', ncol=lgd_ncol)
     plt.tight_layout()
-    plt.subplots_adjust(bottom=.15, wspace=None, hspace=None)
+    plt.subplots_adjust(bottom=.12, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
     plt.close()
 
@@ -492,7 +487,7 @@ def fig_map_KS(ds):
         cbar_label='$D$',
         center=Dcrit,
         reverse=True,
-        fig_name='D_1979-2018_{}_dmean.png'.format(alpha))
+        fig_name='D_1979-2018_{}_dmean.png'.format(alpha*100))
 
 
 def fig_maps_gev24h(ds):
@@ -716,7 +711,7 @@ def table_count_noscalingfit(ds):
 
 
 def table_rsquared_quantiles(ds, dim):
-    ds_rsquared = ds['gev_scaling'].sel(ci='estimate', ev_param=['location', 'scale'], scaling_param='rsquared')
+    ds_rsquared = ds['gev_scaling'].sel(ci='estimate', ev_param=['location', 'scale', 'shape'], scaling_param='rsquared')
     q =  ds_rsquared.load().quantile([0.01, 0.05], dim=dim)
     print(q)
 
