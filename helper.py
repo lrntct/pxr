@@ -6,6 +6,7 @@ import xarray as xr
 import numpy as np
 import numba as nb
 import statsmodels.api as sm
+import bottleneck
 
 
 @nb.vectorize(["float32(float32)", "float64(float64)"])
@@ -36,6 +37,28 @@ def ci_range_to_qlevels(range_list):
     return sorted(q_levels)
 
 
+@nb.jit()
+def pearson_r(x, y, axis=-1):
+    """return Pearson's r for two arrays of parameters
+    """
+    mean_x = np.mean(x, axis=axis, keepdims=True)
+    mean_y = np.mean(y, axis=axis, keepdims=True)
+    num = np.sum((x - mean_x) * (y - mean_y), axis=axis, keepdims=True)
+    denum1 = np.sqrt(np.sum(np.square(x - mean_x), axis=axis, keepdims=True))
+    denum2 = np.sqrt(np.sum(np.square(y - mean_y), axis=axis, keepdims=True))
+    return num / (denum1 * denum2)
+
+
+@nb.jit()
+def spearman_rho(x, y, axis=-1):
+    """Spearman rho. Pearson's r of on the rank.
+    """
+    rank_x = bottleneck.nanrankdata(x, axis=axis)
+    rank_y = bottleneck.nanrankdata(y, axis=axis)
+    return pearson_r(rank_x, rank_y, axis=axis)
+
+
+@nb.jit()
 def OLS_jit(x, y, axis=-1):
     """linear regression using the Ordinary Least Squares.
     """
@@ -49,7 +72,8 @@ def OLS_jit(x, y, axis=-1):
     fitted = slope * x + intercept
     rsquared = (np.sum(np.square(fitted - mean_y), axis=axis, keepdims=True) /
                 np.sum(np.square(y - mean_y), axis=axis, keepdims=True))
-    params = np.array([slope, intercept, rsquared])
+    rho = spearman_rho(x, y, axis=axis)
+    params = np.array([slope, intercept, rsquared, rho])
     return np.squeeze(params, axis=-1)
 
 
@@ -123,14 +147,13 @@ def RLM_slope(x, y, dim=None):
     return slope
 
 
-
 samples_dict = {}
 
 # @nb.jit()
 def get_sampling_idx(n_sample, n_obs):
     """Draw n index sample with replacement.
     Keep the drawn index in a dict of sample from the same size.
-    If a sample from the size allready exists, return it.
+    If a sample of the same size allready exists, return it.
     If not, draw the sample and keep it in the dict.
     Add the original sample as the last sample.
     """
