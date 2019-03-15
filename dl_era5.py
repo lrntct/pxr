@@ -13,24 +13,24 @@ import cdsapi
 import humanize
 import requests
 
-# import read_grib
+import read_grib
 
-DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/ensemble'
+DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/monthly_dl'
+ZARR_DIR = '/home/lunet/gylc4/geodata/ERA5/monthly_zarr'
 
 # FORMAT = 'grib'
 FORMAT = 'netcdf'
 PRODUCT = 'reanalysis-era5-single-levels'
 VARIABLE = [
-            #'mean_total_precipitation_rate'
             'total_precipitation'
             ]
-# TYPE = 'reanalysis'
-TYPE = 'ensemble_members'
+TYPE = 'reanalysis'
+# TYPE = 'ensemble_members'
 MONTH = [str(i+1).zfill(2) for i in range(12)]
 DAY = [str(i+1).zfill(2) for i in range(31)]
 TIME = ['{}:00'.format(i).zfill(5) for i in range(24)]
-START_YEAR = 1979
-END_YEAR = 1979
+START_YEAR = 1989
+END_YEAR = 1989
 
 
 def get_url(year, month):
@@ -81,19 +81,22 @@ def dl_cdsapi(year_month):
             except (requests.exceptions.ReadTimeout, urllib3.exceptions.ReadTimeoutError) as e:
                 continue
             dl_size = f.tell()
-    # convert to zarr and delete grib
-    ds = xr.open_dataset(disk_url)
+    # convert from kg to mm (per hr), save to zarr and delete netcdf
+    ds = xr.open_dataset(disk_url).chunk(read_grib.ZARR_CHUNKS).rename({'tp': 'precipitation'})
+    ds = ds * 1000
     print(ds)
-    # read_grib.grib2zarr(disk_url, DATA_DIR)
-    # os.remove(disk_url)
+    zarr_filename = filename = '{}-{}.zarr'.format(year_month[0], year_month[1])
+    out_file_path = os.path.join(ZARR_DIR, zarr_filename)
+    ds.to_zarr(out_file_path, mode='w', encoding=read_grib.ZARR_ENCODING)
+    os.remove(disk_url)
 
 
 def main():
-    pool = mp.Pool(16)
-    years = range(START_YEAR, END_YEAR+1)
-    year_month = [(y, m) for y in years for m in MONTH]
-    # print(year_month)
-    pool.map(dl_cdsapi, year_month)
+    # pool = mp.Pool(12)
+    # years = range(START_YEAR, END_YEAR+1)
+    # year_month = [(y, m) for y in years for m in MONTH]
+    # pool.map(dl_cdsapi, year_month)
+
 
 if __name__ == "__main__":
     sys.exit(main())

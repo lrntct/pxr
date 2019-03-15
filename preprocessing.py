@@ -6,12 +6,12 @@ import sys
 import os
 from datetime import datetime
 
-import netCDF4
-import iris
 from cf_units import Unit
 import xarray as xr
+import numpy as np
 import dask
 from dask.diagnostics import ProgressBar
+from dask.distributed import Client, LocalCluster
 import zarr
 
 
@@ -22,8 +22,8 @@ LONG_NAME = "Total precipitation"
 VAR_NAME = 'precipitation'
 UNIT = 'm'
 
-YEAR_START = 1979
-YEAR_END = 2018
+YEAR_START = 1989
+YEAR_END = 1998
 
 FILE_CONCAT_PREFIX = 'era5_{}-{}_precip'.format(YEAR_START, YEAR_END)
 
@@ -182,12 +182,34 @@ def xarray_concat_zarr(zarr_path, years):
             except ValueError:
                 pass
             da_list.append(da)
-#     print(da_list)
-    da_full = xr.concat(da_list, dim='time').chunk(ZARR_CHUNKS)
+    da_full = xr.concat(da_list, dim='time').chunk(ZARR_CHUNKS).sortby('time')
     print(da_full)
     out_path = os.path.join(DATA_DIR, '{}.zarr'.format(FILE_CONCAT_PREFIX))
     print(out_path)
-    da_full.to_dataset().to_zarr(out_path, mode='w', encoding=ZARR_ENCODING)
+    da_full.to_dataset().chunk(ZARR_CHUNKS).to_zarr(out_path, mode='w', encoding=ZARR_ENCODING)
+
+
+def merge_per_year(year, out_path):
+    ds_list = []
+    for filename in os.listdir(ZARR_DIR):
+        if str(year) in filename:
+            file_path = os.path.join(ZARR_DIR, filename)
+            ds = xr.open_zarr(file_path)
+            ds_list.append(ds)
+    ds_all = xr.concat(ds_list, dim='time').sortby('time').chunk(ZARR_CHUNKS)
+    ds_all.to_zarr(out_path, mode='w', encoding=ZARR_ENCODING)
+
+
+def update_precip(main_file, update_file):
+    main_path = os.path.join(DATA_DIR, main_file)
+    update_path = os.path.join(DATA_DIR, update_file)
+    da_main = xr.open_zarr(main_path)['precipitation']
+    da_update = xr.open_zarr(update_path)['precipitation']
+    da_updated = da_main.combine_first(da_update)
+    print(da_updated)
+    nan_count = np.isnan(da_updated).sum()
+    print(nan_count.load())
+
 
 
 def main():
@@ -195,16 +217,16 @@ def main():
     # compare_grib()
     years = range(YEAR_START, YEAR_END+1)
 
-
     with ProgressBar():
         # files2zarr(years, '/home/lunet/gylc4/geodata/ERA5/ensemble', 'netcdf', 10000)
         xarray_concat_zarr(ZARR_DIR, years)
+        # merge_per_year(1989, os.parth.join(DATA_DIR, 'era5_1989_precip.zarr'))
+        # update_precip('era5_1979-2018_precip.zarr', 'era5_1989_precip.zarr')
 
-#     grib_path = os.path.join(GRIB_DIR, '1989-11.grib')
-#     print(grib_path)
-#     cube = iris.load_cube('/home/lunet/gylc4/geodata/ERA5/ensemble/1979-09.grib')
-#     print(cube)
 
 
 if __name__ == "__main__":
+    cluster = LocalCluster(n_workers=32, threads_per_worker=1)
+    print(cluster)
+    client = Client(cluster)
     sys.exit(main())
