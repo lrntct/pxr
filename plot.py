@@ -461,7 +461,7 @@ def hexbin(da1, da2, xlabel, ylabel, fig_name):
     fig, ax = plt.subplots(figsize=(4, 3))
     # ax.axis([xmin, xmax, ymin, ymax])
     hb = ax.hexbin(x, y, gridsize=20, extent=[xmin, xmax, ymin, ymax],
-                   mincnt=1, bins=None)
+                   mincnt=100, bins=None)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.plot([xmin, xmax], [ymin, ymax], color='k', linewidth=0.5)
@@ -647,18 +647,15 @@ def plot_scaling_differences(param, df_list, ax, ylim=False):
 
 
 def fig_scaling_ratio_map(ds):
-    scaling_ratio = ds['scaling_ratio'].sel(scaling_extent=b'all')
-    # print(scaling_ratio)
-    new_lat = scaling_ratio['latitude'].values[::1]
-    new_long = scaling_ratio['longitude'].values[::1]
-    # print(new_long)
-    resamp = scaling_ratio.dropna('latitude').dropna('longitude').load().interp(latitude=new_lat, longitude=new_long)
-    # print(resamp)
-    single_map(resamp,
+    # scaling_ratio = ds['scaling_ratio'].sel(scaling_extent=b'all')
+    alpha = ds['gev_scaling'].sel(scaling_param='slope', ci='estimate', ev_param='location')
+    beta = ds['gev_scaling'].sel(scaling_param='slope', ci='estimate', ev_param='scale')
+    scaling_ratio = alpha / beta
+    single_map(scaling_ratio,
                title="",
                cbar_label='$\\alpha / \\beta$',
                center=1.0,
-               fig_name='scaling_ratio2000-2017.png')
+               fig_name='scaling_ratio1979-2018.png')
 
 
 def fig_scaling_gradients_maps(ds):
@@ -1021,7 +1018,7 @@ def main():
     # fig_scaling_gradients_maps(ds_era)
     # fig_scaling_gradients_ratio_maps(ds_era)
     # fig_scaling_differences_all(ds_era, ds_midas, 'scaling_diff.pdf')
-    # fig_scaling_ratio_map(ds_era)
+    fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)
 
     # ds_pairs = prepare_midas_mean(ds_era, ds_midas, ds_midas_pairs)
@@ -1029,9 +1026,9 @@ def main():
 
     # fig_gauges_map('midas_gauges_map.pdf')
 
-    ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
+    # ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
     # print(ds_combined['gev_scaled'].sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
-    plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
+    # plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
 
     ##############
     # ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)
