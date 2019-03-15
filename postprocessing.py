@@ -59,7 +59,7 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
     # Extract sites values from the datasets. combine all ds along a new 'source' dimension
     ds_site_list = []
     for site_name, site_coord in list(site_list.items()):
-        print(site_name)
+        # print(site_name)
         ds_site_sources = []
         # Select site on continous ds
         if ds_cont:
