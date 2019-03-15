@@ -67,8 +67,10 @@ def convert_lon(longitude):
     # return np.where(longitude < 0, longitude + 360, longitude)
 
 
-def set_logd_xticks(ax):
-    ax.set_xticks(XTICKS)
+def set_logd_xticks(ax, xmin=min(XTICKS), xmax=max(XTICKS)):
+    xticks = [i for i in XTICKS if i <= xmax and i >= xmin]
+    ax.set_xlim(xmin, xmax)
+    ax.set_xticks(xticks)
     ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
 
 
@@ -109,7 +111,6 @@ def multi_maps(da_list, disp_names, value_name, fig_name, sqr=False, center=None
         da_list2.append(da_sel)
     da = xr.concat(da_list2, 'param')
     da.attrs['long_name'] = value_name  # Color bar title
-    print(da)
     # Actual plot
     # print(da['longitude'])
     aspect = len(da['longitude']) / len(da['latitude'])
@@ -188,9 +189,9 @@ def plot_scaling_per_site(ds, fig_name):
         'ERA5_scale': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
                            color=C_SECONDARY_2, label='Scale $\lambda$'),
         'ERA5_location_lr': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
-                                 color=C_SECONDARY_1, label='$ad^\\alpha$ (all)'),
+                                 color=C_SECONDARY_1, label='$ad^\\alpha$'),
         'ERA5_scale_lr': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
-                              color=C_SECONDARY_2, label='$bd^\\beta$ (all)'),
+                              color=C_SECONDARY_2, label='$bd^\\beta$'),
         # 'ERA5_location': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
         #                       color=C_SECONDARY_1, label='Location $\psi$'),
         # 'ERA5_scale': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
@@ -493,9 +494,12 @@ def fig_maps_r(ds):
 
 
 def fig_maps_rsquared(ds):
-    multi_maps(ds.sel(scaling_extent=b'daily'), ['location_line_rvalue', 'scale_line_rvalue'],
+    da_scaling = ds['gev_scaling'].sel(ci='estimate', scaling_param='rsquared')
+    da_loc_r2 = da_scaling.sel(ev_param='location').rename('location')
+    da_scale_r2 = da_scaling.sel(ev_param='scale').rename('scale')
+    multi_maps([da_loc_r2, da_scale_r2],
                ['Location', 'Scale'],
-               '$r^2$', 'gumbel_r2_daily.png', sqr=False)
+               '$r^2$', 'gev_r2.png', sqr=False)
 
 
 def get_quantile_dict(quantiles, **kwargs):
@@ -875,7 +879,6 @@ def scatter_intensity(da_i, fig_name):
     da_list = []
     for source in da_i['source'].values:
         series_i = df_i.xs(source, level='source').rename(columns={'intensity':source})
-        # print(series_i.head())
         da_list.append(series_i)
     df_i_s = pd.concat(da_list, axis='columns').reset_index()
 
@@ -918,18 +921,21 @@ def plot_ARF(da, fig_name):
 def intensities_errors(da):
     sns.set_style("ticks")
     sns.set_context("paper")
-    width = 7
-    aspect = 1.2
+    width = 6.5
+    aspect = 1.5
     col_wrap = 3
     height = (6/aspect)/col_wrap
     da = da.drop(['MIDAS', 'ERA5_rlm', 'ERA5_scaled_rlm'], dim='source')
     df = da.to_dataset(dim='source').to_dataframe().reset_index()
+    print(df.head())
     # Plot on facetgrid
     fg = sns.FacetGrid(df, sharex=True, sharey=True, col='T', col_wrap=col_wrap, aspect=aspect, height=height)
     fg = fg.map(plt.plot, 'duration', 'ERA5_scaled', color=C_PRIMARY_2, label='ERA5 scaled').set(xscale = 'log')
+    fg = fg.map(plt.fill_between, 'duration', 'ERA5_scaled_ci_l', 'ERA5_scaled_ci_h',
+                color=C_PRIMARY_2, alpha=0.2, linewidth=0).set(xscale = 'log')
     fg = fg.map(plt.plot, 'duration', 'ERA5', color=C_PRIMARY_1, label='ERA5').set(xscale = 'log')
-    for ax in fg.axes.flatten():
-        set_logd_xticks(ax)
+    fg = fg.map(plt.fill_between, 'duration', 'ERA5_ci_l', 'ERA5_ci_h',
+                color=C_PRIMARY_1, alpha=0.2, linewidth=0, label='95% CI').set(xscale = 'log')
     return fg
 
 
@@ -948,13 +954,23 @@ def plot_intensities_AE(da, ylabel, fig_name):
 
 
 def plot_intensities_errors_percent(da, ylabel, fig_name):
-    fg = intensities_errors(da)
+    dur_min = 1
+    dur_max = 24
+    da_sel = da.sel(duration=slice(dur_min, dur_max))
+    fg = intensities_errors(da_sel)
+    # plot +/1 20% error band
+    err_band = 0.2
+    fg = fg.map(plt.axhline, y=err_band, color='0.8', linewidth=1., linestyle='dashed')
+    fg = fg.map(plt.axhline, y=-err_band, color='0.8', linewidth=1., linestyle='dashed',
+                label='$\pm${:.0%} error band'.format(err_band))
+    # polish plot
     fg.set_ylabels(ylabel)
     for ax in fg.axes.flatten():
         lines, labels = ax.get_legend_handles_labels()
         ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y)))
+        set_logd_xticks(ax, dur_min, dur_max)
     fig = plt.gcf()
-    lgd = fig.legend(lines, labels, loc='lower center', ncol=2)
+    lgd = fig.legend(lines, labels, loc='lower center', ncol=4)
     plt.tight_layout()
     plt.subplots_adjust(bottom=.22, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
@@ -973,17 +989,17 @@ def main():
 
     # fig_map_KS(ds_era)
 
-    # fig_map_anderson(ds_era)
     # fig_maps_gev24h(ds_era)
     # table_count_noGEVfit(ds_era)
     # table_count_noscalingfit(ds_era)
     # table_rsquared_quantiles(ds_era, dim=['longitude', 'latitude'])
     # table_ks_count(ds_era, ['longitude', 'latitude'])
 
+    # fig_maps_rsquared(ds_era)
+
     # fig_scaling_gradients_maps(ds_era)
     # fig_scaling_gradients_ratio_maps(ds_era)
     # fig_scaling_differences_all(ds_era, ds_midas, 'scaling_diff.pdf')
-    # fig_maps_r(ds_era)
     # fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)
 
@@ -997,13 +1013,13 @@ def main():
 
     ##############
     ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)
-    # print(ds_i)
-    scatter_intensity(ds_i['intensity'], 'scatter_intensity.pdf')
+    print(ds_i)
+    # scatter_intensity(ds_i['intensity'], 'scatter_intensity.pdf')
     # plot_ARF(ds_i['arf'], 'arf_scaling.pdf')
     # plot_intensities_AE(ds_i['mae'], 'MAE (mm/h)', 'MAE_intensities.pdf')
     # plot_intensities_errors_percent(ds_i['mape'], 'MAPE', 'MAPE_intensities.pdf')
-    postprocessing.adequacy(ds_i['mape'], threshold=.2)
-    # plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
+    # postprocessing.adequacy(ds_i['mape'], threshold=.2)
+    plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
 
 
     # single_map(ds_era['scaling_pearsonr'],

@@ -15,6 +15,7 @@ import geopandas as gpd
 import shapely.geometry
 import seaborn as sns
 import cartopy as ctpy
+import scipy.stats
 
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import matplotlib.pyplot as plt
@@ -301,10 +302,26 @@ def estimate_intensities(ds_era, ds_gauges):
         mape = np.abs((i_midas - i_source) / i_midas).mean(dim='station')
         mape = mape.expand_dims('source').rename('mape')
         mape.coords['source'] = [reg_source]
-        # MPE
-        mpe = ((i_midas - i_source) / i_midas).mean(dim='station')
-        mpe = mpe.expand_dims('source').rename('mpe')
+        # MPE + ci
+        pe = ((i_midas - i_source) / i_midas).load()
+        # pe_quant = pe.quantile([0.025, 0.975], dim='station')  # 95% CI
+        # pe_quant = pe_quant.expand_dims('source').rename('mpe')
+        # pe_ci_l = pe_quant.sel(quantile=0.025).drop('quantile')
+        # pe_ci_h = pe_quant.sel(quantile=0.975).drop('quantile')
+        mpe = pe.mean(dim='station').rename('mpe')
+        mpe = mpe.expand_dims('source')
         mpe.coords['source'] = [reg_source]
+        # CI
+        pe_std = pe.std(dim='station')
+        n = len(pe['station'])
+        t_quantile = scipy.stats.t.ppf(0.975, n-1)  # 95% CI
+        pe_ci = t_quantile * (pe_std/np.sqrt(n))
+        pe_ci_l = mpe - pe_ci
+        pe_ci_h = mpe + pe_ci
+        pe_ci_l.coords['source'] = [reg_source + '_ci_l']
+        pe_ci_h.coords['source'] = [reg_source + '_ci_h']
+        mpe = xr.concat([mpe, pe_ci_h, pe_ci_l], dim='source')
+        # Merge in a DS
         ds = xr.merge([slope, reg_line, mae, mape, mpe])
         new_sources.append(ds)
     ds = xr.auto_combine([ds_i] + new_sources, concat_dim='source')
