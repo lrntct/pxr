@@ -94,6 +94,7 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
     slope = ds_all['gev_scaling'].sel(scaling_param='slope', **sel_dict)
     intercept = ds_all['gev_scaling'].sel(scaling_param='intercept', **sel_dict)
     params_from_scaling = (10**intercept) * ds_all['duration']**slope
+    # print(params_from_scaling.sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
     # Add non-scaled shape
     da_shape = ds_all['gev'].sel(ev_param='shape').expand_dims(['ev_param'])
     da_shape.coords['ev_param'] = ['shape']
@@ -104,35 +105,44 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
 def ds_to_df(ds, station_coord):
     # Create a dict of Pandas DF {'site': DF} with the df col prefixed with the source
     # print(ds)
+    ci_l = '0.025'
+    ci_h = '0.975'
     dict_df = {}
     for station in ds[station_coord].values:
         df_list = []
         for source in ds['source'].values:
-            # get scale and location
             locator = {station_coord: station,
                        'source': source,
-                       'ci': 'estimate',
+                       'ci': ['estimate', ci_l, ci_h],  # 95% CI
                        'ev_param': ['location', 'scale']}
             ds_extract = ds.sel(**locator).drop(['gev_scaling', 'scaling_param'])
-            # print(ds_extract)
-            # expand the gev params to ds
+
             ds_gev_params = ds_extract['gev'].to_dataset(dim='ev_param')
-            df = ds_gev_params.to_dataframe()
-            rename_rules = {'location': '{}_location'.format(source),
-                            'scale': '{}_scale'.format(source)}
-            df.rename(columns=rename_rules, inplace=True)
+            ds_gev_params_scaled = ds_extract['gev_scaled'].to_dataset(dim='ev_param')
+            df_param_list = []
+            for param_name in ['location', 'scale']:
+                # get scale and location
+                drop_coors = ['source', 'latitude', 'longitude', 'station']
+                ds_gev_param = ds_gev_params[param_name].to_dataset(dim='ci').drop(drop_coors)
+                df_param = ds_gev_param.to_dataframe()
+                rename_rules = {'estimate': '{}_{}_est'.format(source, param_name),
+                                ci_l: '{}_{}_ci_l'.format(source, param_name),
+                                ci_h: '{}_{}_ci_h'.format(source, param_name),
+                                }
+                df_param.rename(columns=rename_rules, inplace=True)
+                df_param_list.append(df_param)
+                # Get params from regression
+                ds_gev_param = ds_gev_params_scaled[param_name].to_dataset(dim='ci').drop(drop_coors)
+                df_param = ds_gev_param.to_dataframe()
+                rename_rules = {'estimate': '{}_{}_lr_est'.format(source, param_name),
+                                ci_l: '{}_{}_lr_ci_l'.format(source, param_name),
+                                ci_h: '{}_{}_lr_ci_h'.format(source, param_name),
+                                }
+                df_param.rename(columns=rename_rules, inplace=True)
+                df_param_list.append(df_param)
+            df = pd.concat(df_param_list, axis=1, sort=False)
             # print(df.head())
             df_list.append(df)
-            # Get values from regression
-            ds_gev_params = ds_extract['gev_scaled'].to_dataset(dim='ev_param')
-            df2 = ds_gev_params.to_dataframe()
-            rename_rules = {
-                'location': '{}_location_lr'.format(source),
-                'scale': '{}_scale_lr'.format(source)
-                }
-            df2.rename(columns=rename_rules, inplace=True)
-            df_list.append(df2)
-            # print(df)
         df_all = pd.concat(df_list, axis=1, sort=False)
         # print(df_all.head())
         dict_df[station] =  df_all

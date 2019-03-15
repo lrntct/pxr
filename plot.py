@@ -45,10 +45,11 @@ EXTRACT = dict(latitude=slice(45, -45),
 #                'Kisumu': (0.1, 34.75)}
 STUDY_SITES = {'Jakarta': (-6.2, 106.816), 'Sydney': (-33.865, 151.209),
                'Beijing': (39.92, 116.38), 'New Delhi': (28.614, 77.21),
-               'Jeddah': (21.54, 39.173), 'Niamey': (13.512, 2.125),
+               'Jeddah': (21.54, 39.173), 'Niamey': (13.512, 2.125), 'Cape Town': (-33.925278, 18.4238),
                'Nairobi': (-1.28, 36.82), 'Brussels': (50.85, 4.35),
                'Santiago': (-33.45, -70.67), 'New York City': (40.72, -74.0),
-               'Mexico City': (19.43, -99.13)
+               'Mexico City': (19.43, -99.13), 'Vancouver': (49.25, -123.1),
+               'Natal': (-5.78, -35.2)
                }
 
 XTICKS = [1, 3, 6, 12, 24, 48, 120, 360]
@@ -177,29 +178,21 @@ def plot_scaling_per_site(ds, fig_name):
     """
     linesyles = {
         # 'MIDAS_location': dict(linestyle='None', linewidth=0, marker='v', markersize=3,
-        #                        color=C_PRIMARY_1, label='Location $\psi$ (MIDAS)'),
+        #                        color=C_PRIMARY_1, label='Location $\mu$ (MIDAS)'),
         # 'MIDAS_location_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0,
         #                           color=C_PRIMARY_1, label='$a d^\\alpha$ (MIDAS)'),
         # 'MIDAS_scale': dict(linestyle='None', linewidth=0, marker='v', markersize=3,
-        #                     color=C_PRIMARY_2, label='Scale $\lambda$ (MIDAS)'),
+        #                     color=C_PRIMARY_2, label='Scale $\sigma$ (MIDAS)'),
         # 'MIDAS_scale_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0,
         #                        color=C_PRIMARY_2, label='$\lambda_D (d/D)^\\beta$ (MIDAS)'),
         'ERA5_location': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
-                              color=C_SECONDARY_1, label='Location $\psi$'),
+                              color=C_PRIMARY_1, label='Location $\mu$', zorder=20),
         'ERA5_scale': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
-                           color=C_SECONDARY_2, label='Scale $\lambda$'),
+                           color=C_PRIMARY_2, label='Scale $\sigma$', zorder=20),
         'ERA5_location_lr': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
-                                 color=C_SECONDARY_1, label='$ad^\\alpha$'),
+                                 color=C_PRIMARY_1, label='$ad^\\alpha$', zorder=10),
         'ERA5_scale_lr': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
-                              color=C_SECONDARY_2, label='$bd^\\beta$'),
-        # 'ERA5_location': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
-        #                       color=C_SECONDARY_1, label='Location $\psi$'),
-        # 'ERA5_scale': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
-        #                    color=C_SECONDARY_2, label='Scale $\lambda$'),
-        # 'ERA5_location_lr': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
-        #                          color=C_SECONDARY_1, label='$ad^\\alpha$ (all)'),
-        # 'ERA5_scale_lr': dict(linestyle='solid', linewidth=1., marker=None, markersize=0,
-                            #   color=C_SECONDARY_2, label='$bd^\\beta$ (all)'),
+                              color=C_PRIMARY_2, label='$bd^\\beta$', zorder=10),
         # 'ERA5_location_lr_daily': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
         #                          color=C_SECONDARY_1, label='$ad^\\alpha$ (daily)'),
         # 'ERA5_scale_lr_daily': dict(linestyle='dashed', linewidth=1., marker=None, markersize=0,
@@ -207,9 +200,10 @@ def plot_scaling_per_site(ds, fig_name):
                 }
 
     dict_df = postprocessing.ds_to_df(ds, 'station')
+    # sys.exit()  ###
     col_num = 3
     row_num = math.ceil(len(dict_df) / col_num)
-    fig_size = (7, 7)
+    fig_size = (7, 8)
     fig = plt.figure(figsize=fig_size)
     ax_num = 1
 
@@ -229,22 +223,46 @@ def plot_scaling_per_site(ds, fig_name):
             ax = fig.add_subplot(row_num, col_num, ax_num,
                                  sharex=first_ax, sharey=first_ax)
         print(site_name)
+        # print(df.head())
         # plot
-        for col, styles in linesyles.items():
-            try:
-                df[col].plot(ax=ax, label=styles['label'],
-                        # title=site_name.decode("utf-8"),
-                        title=site_name,
-                        loglog=True,
-                        # logx=True,
-                        linestyle=styles['linestyle'], linewidth=styles['linewidth'],
-                        markersize=styles['markersize'],
-                        marker=styles['marker'], color=styles['color'])
-            except KeyError:
-                continue
+        for col_prefix, styles in linesyles.items():
+            col_est = col_prefix + '_est'
+            col_ci_l = col_prefix + '_ci_l'
+            col_ci_h = col_prefix + '_ci_h'
+            # try:
+            # plot estimate
+            # ax.plot(df.index, df[col_est])
+            df[col_est].plot(ax=ax, label=styles['label'],
+                title=site_name, zorder=styles['zorder'],
+                loglog=True,
+                linestyle=styles['linestyle'], linewidth=styles['linewidth'],
+                markersize=styles['markersize'],
+                marker=styles['marker'], color=styles['color'])
+            # plot error
+            if col_prefix.endswith('_lr'):
+                # df[col_ci_l].plot(ax=ax, label=styles['label'],
+                #     title=site_name,
+                #     loglog=True,
+                #     linestyle='dashed', linewidth=styles['linewidth'],
+                #     markersize=styles['markersize'],
+                #     marker=styles['marker'], color=styles['color'])
+                ax.fill_between(df.index, df[col_ci_l], df[col_ci_h],
+                        alpha=0.25, label=styles['label'] + ' 95% CI', linewidth=0,
+                        color=styles['color'], zorder=0)
+                pass
+            else:
+                yerr = [df[col_ci_l], df[col_ci_h]]
+                ax.errorbar(df.index, df[col_est], yerr=yerr, fmt='none',
+                        color=styles['color'], linewidth=0, zorder=5, alpha=0.9,
+                        capsize=styles['markersize'], label=styles['label'] + ' 95% CI')
+                # pass
+            # except KeyError:
+            #     continue
         lines, labels = ax.get_legend_handles_labels()
         ax.set_xlabel('$d$ (hours)')
         ax.set_ylabel('$\psi, \lambda$')
+        # ax.set_xscale('log')
+        # ax.set_yscale('log')
         sites_ax_list.append(ax)
         ax_num += 1
 
@@ -252,10 +270,8 @@ def plot_scaling_per_site(ds, fig_name):
     for ax in sites_ax_list:
         set_logd_xticks(ax)
         ax.margins(x=5)
-
-    # plt.legend(lines, labels, loc='lower center', ncol=4)
-
-    lgd = fig.legend(lines, labels, loc='lower center', ncol=2)
+    lgd_ncol = math.ceil(len(labels) / 2)
+    lgd = fig.legend(lines, labels, loc='lower center', ncol=lgd_ncol)
     plt.tight_layout()
     plt.subplots_adjust(bottom=.15, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
@@ -483,7 +499,7 @@ def fig_maps_gev24h(ds):
     da_loc = ds['gev'].sel(ci='estimate', duration=24, ev_param='location').rename('location')
     da_scale = ds['gev'].sel(ci='estimate', duration=24, ev_param='scale').rename('scale')
     multi_maps([da_loc, da_scale],
-                ['Location $\psi$', 'Scale $\lambda$'],
+                ['Location $\mu$', 'Scale $\sigma$'],
                 'Parameter value', 'gev_params_24h_1979-2018.png')
 
 
@@ -500,6 +516,15 @@ def fig_maps_rsquared(ds):
     multi_maps([da_loc_r2, da_scale_r2],
                ['Location', 'Scale'],
                '$r^2$', 'gev_r2.png', sqr=False)
+
+
+def fig_maps_spearman(ds):
+    da_scaling = ds['gev_scaling'].sel(ci='estimate', scaling_param='spearman')
+    da_loc_rho = da_scaling.sel(ev_param='location').rename('location')
+    da_scale_rho = da_scaling.sel(ev_param='scale').rename('scale')
+    multi_maps([da_loc_rho, da_scale_rho],
+               ['Location', 'Scale'],
+               '$\\rho$', 'gev_rho.png', sqr=False)
 
 
 def get_quantile_dict(quantiles, **kwargs):
@@ -996,6 +1021,7 @@ def main():
     # table_ks_count(ds_era, ['longitude', 'latitude'])
 
     # fig_maps_rsquared(ds_era)
+    # fig_maps_spearman(ds_era)
 
     # fig_scaling_gradients_maps(ds_era)
     # fig_scaling_gradients_ratio_maps(ds_era)
@@ -1008,18 +1034,19 @@ def main():
 
     # fig_gauges_map('midas_gauges_map.pdf')
 
-    # ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
-    # plot_scaling_per_site(ds_combined, 'sites_scaling_select_2000-2017-11sites.pdf')
+    ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
+    # print(ds_combined['gev_scaled'].sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
+    plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
 
     ##############
-    ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)
-    print(ds_i)
+    # ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)
+    # print(ds_i)
     # scatter_intensity(ds_i['intensity'], 'scatter_intensity.pdf')
     # plot_ARF(ds_i['arf'], 'arf_scaling.pdf')
     # plot_intensities_AE(ds_i['mae'], 'MAE (mm/h)', 'MAE_intensities.pdf')
     # plot_intensities_errors_percent(ds_i['mape'], 'MAPE', 'MAPE_intensities.pdf')
     # postprocessing.adequacy(ds_i['mape'], threshold=.2)
-    plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
+    # plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
 
 
     # single_map(ds_era['scaling_pearsonr'],
