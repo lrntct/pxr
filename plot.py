@@ -977,8 +977,8 @@ def plot_intensities_errors_percent(da, ylabel, fig_name):
     fg = intensities_errors(da_sel)
     # plot +/1 20% error band
     err_band = 0.2
-    fg = fg.map(plt.axhline, y=err_band, color='0.8', linewidth=1., linestyle='dashed')
-    fg = fg.map(plt.axhline, y=-err_band, color='0.8', linewidth=1., linestyle='dashed',
+    fg = fg.map(plt.axhline, y=err_band, color='0.8', linewidth=1., linestyle='dashed', zorder=0)
+    fg = fg.map(plt.axhline, y=-err_band, color='0.8', linewidth=1., linestyle='dashed', zorder=0,
                 label='$\pm${:.0%} error band'.format(err_band))
     # polish plot
     fg.set_ylabels(ylabel)
@@ -1018,7 +1018,7 @@ def main():
     # fig_scaling_gradients_maps(ds_era)
     # fig_scaling_gradients_ratio_maps(ds_era)
     # fig_scaling_differences_all(ds_era, ds_midas, 'scaling_diff.pdf')
-    fig_scaling_ratio_map(ds_era)
+    # fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)
 
     # ds_pairs = prepare_midas_mean(ds_era, ds_midas, ds_midas_pairs)
@@ -1031,14 +1031,14 @@ def main():
     # plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
 
     ##############
-    # ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)
+    ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)
     # print(ds_i)
     # scatter_intensity(ds_i['intensity'], 'scatter_intensity.pdf')
     # plot_ARF(ds_i['arf'], 'arf_scaling.pdf')
     # plot_intensities_AE(ds_i['mae'], 'MAE (mm/h)', 'MAE_intensities.pdf')
     # plot_intensities_errors_percent(ds_i['mape'], 'MAPE', 'MAPE_intensities.pdf')
     # postprocessing.adequacy(ds_i['mape'], threshold=.2)
-    # plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
+    plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
 
 
     # single_map(ds_era['scaling_pearsonr'],
