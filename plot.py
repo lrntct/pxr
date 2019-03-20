@@ -487,10 +487,10 @@ def fig_map_KS(ds):
     single_map(Dmean,
         # title='Lilliefors test statistic (1979-2018, mean on $d$, $\\alpha=${})'.format(alpha),
         title='',
-        cbar_label='$D$',
+        cbar_label='$D (\\alpha={})$'.format(alpha),
         center=Dcrit,
         reverse=True,
-        fig_name='D_1979-2018_{}_dmean.png'.format(alpha*100))
+        fig_name='D_1979-2018_{}_dmean.png'.format(int(alpha*100)))
 
 
 def fig_maps_gev24h(ds):
@@ -1009,13 +1009,13 @@ def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
     ds_midas = xr.open_zarr(MIDAS_AMS_FILE)
 
-    # print(ds_era['gev_scaled'].load())
+    print(ds_era)
     # ams_midas = ds_midas['annual_max']
     # nan_ams_midas = np.isnan(ams_midas).sum(dim=['year'])
     # for d in nan_ams_midas['duration'].values:
     #     print(nan_ams_midas.sel(duration=d).load())
 
-    # fig_map_KS(ds_era)
+    fig_map_KS(ds_era)
 
     # fig_maps_gev24h(ds_era)
     # fig_maps_gev_scaled24h(ds_era)
@@ -1038,9 +1038,9 @@ def main():
 
     # fig_gauges_map('midas_gauges_map.pdf')
 
-    ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
+    # ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
     # print(ds_combined['gev_scaled'].sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
-    plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
+    # plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
 
     ##############
     # ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)
