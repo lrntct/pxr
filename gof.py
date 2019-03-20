@@ -20,7 +20,7 @@ def KS_test(ecdf, cdf):
 def lilliefors_Dcrit(ds, chunks):
     """Estimate the critical values of the KS test.
     Use the pool of KS stats calculated over the whole dataset.
-    The critical value corresponds to the quantile all the KS stats.
+    The critical value corresponds to the quantile of all the KS stats.
 
     See also:
     Wilks, D. S. (2011).
@@ -36,3 +36,4 @@ def lilliefors_Dcrit(ds, chunks):
                                coords=[significance_levels],
                                dims=['significance_level'])
     return ds.chunk(chunks)
+
