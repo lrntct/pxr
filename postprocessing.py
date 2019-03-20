@@ -54,7 +54,7 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
     if not ds_cont and not ds_cont:
         raise ValueError('No Dataset provided')
 
-    keep_vars = ['gev', 'gev_scaling']
+    keep_vars = ['gev', 'gev_scaled', 'gev_scaling']
 
     # Extract sites values from the datasets. combine all ds along a new 'source' dimension
     ds_site_list = []
@@ -89,16 +89,6 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
 
     # Concat all along the 'station' dimension
     ds_all = xr.concat(ds_site_list, dim='station')
-    # Calculate regression lines
-    sel_dict = dict(ev_param=['location', 'scale'])
-    slope = ds_all['gev_scaling'].sel(scaling_param='slope', **sel_dict)
-    intercept = ds_all['gev_scaling'].sel(scaling_param='intercept', **sel_dict)
-    params_from_scaling = (10**intercept) * ds_all['duration']**slope
-    # print(params_from_scaling.sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
-    # Add non-scaled shape
-    da_shape = ds_all['gev'].sel(ev_param='shape').expand_dims(['ev_param'])
-    da_shape.coords['ev_param'] = ['shape']
-    ds_all['gev_scaled'] = xr.concat([params_from_scaling, da_shape], dim='ev_param').transpose(*ds_all['gev'].dims)
     return ds_all
 
 
@@ -130,6 +120,8 @@ def ds_to_df(ds, station_coord):
                                 ci_h: '{}_{}_ci_h'.format(source, param_name),
                                 }
                 df_param.rename(columns=rename_rules, inplace=True)
+                # if station == 'Jakarta':
+                #     print(df_param.head())
                 df_param_list.append(df_param)
                 # Get params from regression
                 ds_gev_param = ds_gev_params_scaled[param_name].to_dataset(dim='ci').drop(drop_coors)
@@ -139,6 +131,8 @@ def ds_to_df(ds, station_coord):
                                 ci_h: '{}_{}_lr_ci_h'.format(source, param_name),
                                 }
                 df_param.rename(columns=rename_rules, inplace=True)
+                # if station == 'Jakarta':
+                #     print(df_param.head())
                 df_param_list.append(df_param)
             df = pd.concat(df_param_list, axis=1, sort=False)
             # print(df.head())

@@ -29,7 +29,7 @@ import postprocessing
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
 # HOURLY_FILE = 'era5_2000-2012_precip.zarr'
-ERA_AMS_FILE = 'era5_1979-2018_ams_scaling.zarr'
+ERA_AMS_FILE = 'era5_1979-2018_ams_gof.zarr'
 MIDAS_AMS_FILE = '../data/MIDAS/midas_1979-2018_ams_scaling.zarr'
 PLOT_DIR = '../plot'
 
@@ -184,7 +184,7 @@ def plot_scaling_per_site(ds, fig_name):
         # 'MIDAS_scale': dict(linestyle='None', linewidth=0, marker='v', markersize=3,
         #                     color=C_PRIMARY_2, label='Scale $\sigma$ (MIDAS)'),
         # 'MIDAS_scale_lr': dict(linestyle='solid', linewidth=0.5, marker=None, markersize=0,
-        #                        color=C_PRIMARY_2, label='$\lambda_D (d/D)^\\beta$ (MIDAS)'),
+        #                        color=C_PRIMARY_2, label='$\sigma_D (d/D)^\\beta$ (MIDAS)'),
         'ERA5_location': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
                               color=C_PRIMARY_1, label='Location $\mu$', zorder=20),
         'ERA5_scale': dict(linestyle='None', linewidth=0, marker='o', markersize=2,
@@ -223,15 +223,14 @@ def plot_scaling_per_site(ds, fig_name):
             ax = fig.add_subplot(row_num, col_num, ax_num,
                                  sharex=first_ax, sharey=first_ax)
         print(site_name)
-        # print(df.head())
+        # if site_name == 'Jakarta':
+        #     print(df[['ERA5_location_ci_l', 'ERA5_location_ci_h', 'ERA5_location_lr_ci_l', 'ERA5_location_lr_ci_h']].head())
         # plot
         for col_prefix, styles in linesyles.items():
             col_est = col_prefix + '_est'
             col_ci_l = col_prefix + '_ci_l'
             col_ci_h = col_prefix + '_ci_h'
-            # try:
             # plot estimate
-            # ax.plot(df.index, df[col_est])
             df[col_est].plot(ax=ax, label=styles['label'],
                 title=site_name, zorder=styles['zorder'],
                 loglog=True,
@@ -240,21 +239,25 @@ def plot_scaling_per_site(ds, fig_name):
                 marker=styles['marker'], color=styles['color'])
             # plot error
             if col_prefix.endswith('_lr'):
-                ax.fill_between(df.index, df[col_ci_l], df[col_ci_h],
+                ax.fill_between(df.index, df[col_ci_h], df[col_ci_l],
                         alpha=0.25, label=styles['label'] + ' 95% CI', linewidth=0,
                         color=styles['color'], zorder=0)
-                pass
             else:
-                yerr = [df[col_ci_l], df[col_ci_h]]
-                ax.errorbar(df.index, df[col_est], yerr=yerr, fmt='none',
-                        color=styles['color'], linewidth=0, zorder=5, alpha=0.9,
-                        capsize=styles['markersize'], label=styles['label'] + ' 95% CI')
-                # pass
-            # except KeyError:
-            #     continue
+                df[col_ci_h].plot(ax=ax, label=styles['label'] + ' 95% CI',
+                    title=site_name, loglog=True,
+                    zorder=5, alpha=0.9,  marker='_',
+                    linestyle=styles['linestyle'], linewidth=styles['linewidth'],
+                    markersize=styles['markersize'],
+                    color=styles['color'])
+                df[col_ci_l].plot(ax=ax, label='',
+                    title=site_name, loglog=True,
+                    zorder=5, alpha=0.9, marker='_',
+                    linestyle=styles['linestyle'], linewidth=styles['linewidth'],
+                    markersize=styles['markersize'],
+                    color=styles['color'])
         lines, labels = ax.get_legend_handles_labels()
         ax.set_xlabel('$d$ (hours)')
-        ax.set_ylabel('$\psi, \lambda$')
+        ax.set_ylabel('$\mu, \sigma$')
         # ax.set_xscale('log')
         # ax.set_yscale('log')
         sites_ax_list.append(ax)
@@ -498,6 +501,14 @@ def fig_maps_gev24h(ds):
                 'Parameter value', 'gev_params_24h_1979-2018.png')
 
 
+def fig_maps_gev_scaled24h(ds):
+    da_loc = ds['gev_scaled'].sel(ci='estimate', duration=24, ev_param='location').rename('location')
+    da_scale = ds['gev_scaled'].sel(ci='estimate', duration=24, ev_param='scale').rename('scale')
+    da_shape = ds['gev_scaled'].sel(ci='estimate', duration=24, ev_param='shape').rename('shape')
+    multi_maps([da_loc, da_scale, da_shape],
+                ['Location $\mu$', 'Scale $\sigma$', 'Shape $\kappa$'],
+                'Parameter value', 'gev_params_scaled_24h_1979-2018.png')
+
 def fig_maps_r(ds):
     multi_maps(ds.sel(scaling_extent=b'daily'), ['location_line_rvalue', 'scale_line_rvalue'],
                ['Location', 'Scale'],
@@ -598,7 +609,7 @@ def fig_scaling_differences_all(ds_era, ds_midas, fig_name):
     # plt.tick_params(labelcolor='none', top=False,
     #                 bottom=False, left=False, right=False)
     # plt.grid(False)
-    # ylabel = '$\log_{{10}}( d^{{\eta}} / (\psi, \lambda) )$'
+    # ylabel = '$\log_{{10}}( d^{{\eta}} / (\mu, \sigma) )$'
     # plt.ylabel(ylabel)
 
     handles, labels = ax.get_legend_handles_labels()
@@ -613,7 +624,7 @@ def plot_scaling_differences(param, df_list, ax, ylim=False):
     """
     Plot quantiles of differences
     """
-    param_symbols = {'location': '\psi_d', 'scale': '\lambda_d'}
+    param_symbols = {'location': '\mu_d', 'scale': '\sigma_d'}
     gradient_symbols = {'location': '\\alpha', 'scale': '\\beta'}
     intercept_symbols = {'location': 'a', 'scale': 'b'}
     colors = {'ERA5': C_PRIMARY_1, 'MIDAS': C_PRIMARY_2,
@@ -998,7 +1009,7 @@ def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
     ds_midas = xr.open_zarr(MIDAS_AMS_FILE)
 
-    # print(ds_era)
+    # print(ds_era['gev_scaled'].load())
     # ams_midas = ds_midas['annual_max']
     # nan_ams_midas = np.isnan(ams_midas).sum(dim=['year'])
     # for d in nan_ams_midas['duration'].values:
@@ -1007,6 +1018,7 @@ def main():
     # fig_map_KS(ds_era)
 
     # fig_maps_gev24h(ds_era)
+    # fig_maps_gev_scaled24h(ds_era)
     # table_count_noGEVfit(ds_era)
     # table_count_noscalingfit(ds_era)
     # table_rsquared_quantiles(ds_era, dim=['longitude', 'latitude'])
@@ -1026,23 +1038,23 @@ def main():
 
     # fig_gauges_map('midas_gauges_map.pdf')
 
-    # ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
+    ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
     # print(ds_combined['gev_scaled'].sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
-    # plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
+    plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
 
     ##############
-    ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)
+    # ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)
     # print(ds_i)
     # scatter_intensity(ds_i['intensity'], 'scatter_intensity.pdf')
     # plot_ARF(ds_i['arf'], 'arf_scaling.pdf')
     # plot_intensities_AE(ds_i['mae'], 'MAE (mm/h)', 'MAE_intensities.pdf')
     # plot_intensities_errors_percent(ds_i['mape'], 'MAPE', 'MAPE_intensities.pdf')
     # postprocessing.adequacy(ds_i['mape'], threshold=.2)
-    plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
+    # plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
 
 
     # single_map(ds_era['scaling_pearsonr'],
-    #            title="$d^{\eta(\psi)}$ - $d^{\eta(\lambda)}$ correlation",
+    #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
     #            cbar_label='Pearson correlation coefficient',
     #            fig_name='pearsonr.png')
 
