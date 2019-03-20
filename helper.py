@@ -152,17 +152,15 @@ samples_dict = {}
 # @nb.jit()
 def get_sampling_idx(n_sample, n_obs):
     """Draw n index sample with replacement.
-    Keep the drawn index in a dict of sample from the same size.
-    If a sample of the same size allready exists, return it.
+    Keep the drawn index in a dict of samples of the same size.
+    If a sample of the same size already exists, return it.
     If not, draw the sample and keep it in the dict.
     Add the original sample as the last sample.
     """
     sample_size = (n_sample, n_obs)
     try:
         sampling_idx = samples_dict[sample_size]
-        # print('Taken sample from dict')
     except KeyError:
-        # print('draw sample')
         sampling_idx = np.random.randint(n_obs, size=sample_size, dtype='uint16')
         samples_dict[sample_size] = sampling_idx
     # Add the original order as the last sample
