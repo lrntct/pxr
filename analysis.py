@@ -15,7 +15,6 @@ import scipy.stats
 
 import ev_fit
 import gof
-import scaling
 import helper
 
 
@@ -118,8 +117,8 @@ def step3_fit_gev_with_ci(ds, n_sample):
     """Estimate GEV parameters and their scaling in duration.
     Confidence intervals are estimated with the bootstrap method.
     """
-    ds_gev = scaling.scaling_gev(ds, DTYPE, n_sample=n_sample,
-                                 ci_range=[0.9, 0.95, 0.99], shape=-0.114)
+    ds_gev = ev_fit.gev_fit_scale(ds, DTYPE, n_sample=n_sample,
+                                  ci_range=[0.9, 0.95, 0.99], shape=-0.114)
     return xr.merge([ds, ds_gev])
 
 

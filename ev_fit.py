@@ -236,60 +236,118 @@ def gev_from_samples(arr_ams, n_sample, shape_param):
 
 
 @nb.jit()
-def gev_func(arr_ams, n_sample, q_levels, shape_param):
-    """Estimate the GEV parameters and their confidence interval using the bootstrap method.
-    The last row of sample idx is the original order, for the actual parameters estimates.
-    arr_ams is one-dimensional
+def gev_fit_scale_func(arr_ams, ax_duration, n_sample, log_duration, q_levels, shape_param):
+    """Fit the GEV on n_sample bootstrap samples
+    Estimate the parameters of linear regression on the log transformed GEV parameters and duration.
+    Estimate GEV parameters from the regression line.
+    Get the confidence interval with the bootstrap technique.
+    arr_ams is bi-dimensional
     """
-    # Find GEV parameters
-    ev_params = gev_from_samples(arr_ams, n_sample, shape_param)
-    # Get the parameters from the original sample order (last sample)
-    orig_params = np.expand_dims(ev_params[:, -1], axis=0)
-    # get confidence interval. Changes shape to (quantiles, ev_params)
-    quantiles = np.nanquantile(ev_params[:, :-1], q_levels, axis=1)
-    # Group parameters from the original sample and their confidence interval
-    return np.concatenate([orig_params, quantiles])
+    assert arr_ams.ndim == 2
+    # Iterate along duration.
+    ev_params_list = []
+    for i in range(arr_ams.shape[ax_duration]):
+        arr_years = arr_ams[...,i]
+        # Find GEV parameters. Resulting shape (gev_params, sample)
+        ev_params_list.append(gev_from_samples(arr_years, n_sample, shape_param))
+    # Stack the parameters in duration. New shape (gev_params, sample, duration)
+    ev_params = np.stack(ev_params_list, axis=-1)
+    ax_duration = 2
+    # print('ev_params', ev_params.shape)
+    # Log transform the parameters
+    log_ev_params = helper.log10(ev_params)
+    # Add two dimensions to duration to fit the shape of ev_params
+    log_duration = log_duration[None, None, :]
+    assert len(log_duration.shape) == len(log_ev_params.shape)
+    # Fit linear regression. Add the ols params on first axis. Resulting shape (ols, gev, sample)
+    ols_params = helper.OLS_jit(log_duration, log_ev_params, axis=ax_duration)
+
+    # Estimate GEV parameters from the regression
+    slope = ols_params[0, :, :]
+    log_intercept = ols_params[1, :, :]
+    # Match dims of slope and intercept to duration. New shape (gev_params, sample, duration).
+    slope = np.expand_dims(slope, axis=-1)
+    log_intercept = np.expand_dims(log_intercept, axis=-1)
+    params_from_scaling = 10**(log_intercept + log_duration*slope)
+    # GEV shape param is not scaled.
+    params_from_scaling[2, :, :] = ev_params[2, :, :]
+    # print('params_from_scaling', params_from_scaling.shape)
+    assert params_from_scaling.shape == ev_params.shape
+
+    # Match shape and stack EV and OLS. New shape (ols, gev_params, sample, duration, 'source').
+    new_shape = list(np.maximum(ols_params[:, :, :, None].shape, ev_params[None, :, :, :].shape))
+    new_shape.append(3)  # size of source
+    ols_ev = np.full(new_shape, np.nan, dtype=np.float32)
+    ols_ev[0, :, :, :, 0] = ev_params
+    ols_ev[0, :, :, :, 1] = params_from_scaling
+    ols_ev[:, :, :, 0, 2] = ols_params
+    # print('ols_ev', ols_ev.shape)
+
+    # Get the parameters from the original sample order (last sample). Add a dim to fit shape of quantiles
+    orig_params = np.expand_dims(ols_ev[:, :, -1, :, :], axis=0)
+    # print('orig_params', orig_params.shape)
+    # Get confidence interval, excluding original sample. Resulting shape (quantiles, ols, gev, duration, 'source')
+    ev_quantiles = np.nanquantile(ols_ev[:, :, :-1, :, :], q_levels, axis=2)
+    ci = np.concatenate([orig_params, ev_quantiles])
+    # print('ci', ci.shape)
+    return ci
 
 
-def fit_gev(ds, dtype, n_sample=500, ci_range=[0.95], shape=None):
-    """Fit the GEV
+def gev_fit_scale(ds, dtype, n_sample=500, ci_range=[0.95], shape=None):
+    """Estimate GEV parameters.
+    Find their scaling parameters.
+    Estimate the GEV parameters from the scaling.
+    Estimate CI with bootstrap.
     """
+    log_dur = helper.log10(ds['duration'].values)
     # Estimate parameters and CI
     q_levels = helper.ci_range_to_qlevels(ci_range)
     da_ci = xr.apply_ufunc(
-        gev_func,
+        gev_fit_scale_func,
         ds['annual_max'],
         kwargs={'n_sample': n_sample,
+                'ax_duration': 1,
+                'log_duration': log_dur,
                 'q_levels': q_levels,
                 'shape_param': shape},
-        input_core_dims=[['year']],
-        output_core_dims=[['ci', 'ev_param']],
+        input_core_dims=[['year', 'duration']],
+        output_core_dims=[['ci', 'scaling_param',
+                           'ev_param', 'duration', 'source']],
         vectorize=True,
         dask='parallelized',
         # dask='allowed',
         output_dtypes=[dtype],
-        output_sizes={'ci': len(q_levels)+1, 'ev_param': 3}
+        output_sizes={'ci': len(q_levels)+1,
+                      'scaling_param': 4, 'ev_param': 3,
+                      'duration': len(log_dur), 'source': 3}
         )
     q_levels_str = ["{0:.3f}".format(l) for l in q_levels]
     da_ci = da_ci.assign_coords(ci=['estimate'] + q_levels_str,
-                                ev_param=['location', 'scale', 'shape'])
-    return da_ci.rename('gev')
+                                scaling_param=['slope', 'intercept', 'rsquared', 'spearman'],
+                                ev_param=['location', 'scale', 'shape'],
+                                duration=ds['duration'],
+                                source=['gev_params', 'gev_scaled', 'gev_scaling'])
+    # Detangle the arrays that were joined. Use the first coord to drop the uneeded dimension.
+    da_ev_params = da_ci.sel(source='gev_params', scaling_param=da_ci['scaling_param'][0], drop=True).rename('gev')
+    da_ev_scaled = da_ci.sel(source='gev_scaled', scaling_param=da_ci['scaling_param'][0], drop=True).rename('gev_scaled')
+    da_gev_scaling = da_ci.sel(source='gev_scaling', duration=da_ci['duration'][0], drop=True).rename('gev_scaling')
+    return xr.merge([da_ev_params, da_ev_scaled, da_gev_scaling])
 
 
 ## CDF ##
 
-# @nb.njit()
+@nb.jit()
 def gumbel_cdf(x, loc, scale):
     z = (x - loc) / scale
     return fscalar(np.e)**(-fscalar(np.e)**-z)
 
 
-# @nb.njit()
+@nb.jit()
 def gev_cdf_nonzero(x, loc, scale, shape):
     """Consider an EV type II if shape<0
     """
     z = (x - loc) / scale
-    return fscalar(np.e) ** (-(iscalar(1)-shape*z)**(iscalar(1)/shape))
+    return fscalar(np.e) ** (-(1-shape*z)**(1/shape))
 
 
 # @nb.njit()
@@ -298,196 +356,3 @@ def gev_cdf(x, loc, scale, shape):
                     gumbel_cdf(x, loc, scale),
                     gev_cdf_nonzero(x, loc, scale, shape))
 
-
-## Functions not used in the analysis ##
-
-# def frechet_cdf(x, loc, scale, shape):
-#     """
-#     """
-#     z = (x - loc) / scale
-#     return np.e**(-z)**shape
-
-# def gumbel_mle_wrapper(ams):
-#     try:
-#         params = scipy.stats.gumbel_r.fit(ams)
-#     except RuntimeError:
-#         params = (np.nan, np.nan)
-#     return params[0], params[1]
-
-
-# def gumbel_mle_fit(ds, dtype=DTYPE):
-#     """Employ scipy stats to find the Gumbel coefficients
-#     """
-#     loc, scale = xr.apply_ufunc(gumbel_mle_wrapper,
-#                                 ds['annual_max'],
-#                                 input_core_dims=[['year']],
-#                                 output_core_dims=[[], []],
-#                                 vectorize=True,
-#                                 dask='allowed',
-#                                 output_dtypes=[dtype, dtype]
-#                                 )
-#     return loc.rename('location'), scale.rename('scale')
-
-
-# def frechet_mom(ds, shape=0.114):
-#     """Fit Fréchet (EV type II) using the method of moments and a fixed shape parameter.
-#     EV type II when shape>0.
-#     Koutsoyiannis, D. (2004).
-#     Statistics of extremes and estimation of extreme rainfall: II.
-#     Empirical investigation of long rainfall records.
-#     Hydrological Sciences Journal, 49(4).
-#     https://doi.org/10.1623/hysj.49.4.591.54424
-#     """
-#     c1 = math.sqrt(helper.gamma(1-2*shape) - helper.gamma(1-shape)**2)
-#     c3 = (helper.gamma(1-shape)-1)/shape
-
-#     mean = ds['annual_max'].mean(dim='year')
-#     std = ds['annual_max'].std(dim='year')
-#     scale = (c1 * std).rename('scale')
-#     loc = ((mean/scale) - c3).rename('location')
-#     da_shape = xr.full_like(mean, shape).rename('shape')
-#     return loc, scale, da_shape
-
-
-# def sample_L_moments(b0, b1, b2, b3):
-#     """Sample L-moments
-#     Hosking, J. R. M., and James R. Wallis. 1997.
-#     “L-Moments.” In Regional Frequency Analysis, 14–43.
-#     Cambridge: Cambridge University Press.
-#     https://doi.org/10.1017/CBO9780511529443.004.
-#     """
-#     l1 = b0
-#     l2 = 2 * b1 - b0
-#     l3 = 6*b2 - 6*b1 + b0
-#     l4 = 20*b3 - 30*b2 + 12*b1 - b0
-#     return l1, l2, l3, l4
-
-
-# def l_ratios(l1, l2, l3, l4):
-#     """
-#     """
-#     LCV = l2 / l1
-#     Lskewness = l3 / l2
-#     Lkurtosis = l4 / l2
-#     return LCV, Lskewness, Lkurtosis
-
-# def gumbel_mom(ds):
-#     """Fit Gumbel using the method of moments
-#     (Maidment 1993, cited by Bougadis & Adamowki 2006)
-#     """
-#     magic_number1 = 0.45
-#     magic_number2 = 0.7797
-#     mean = ds['annual_max'].mean(dim='year')
-#     std = ds['annual_max'].std(dim='year')
-#     loc = (mean - (magic_number1 * std)).rename('location')
-#     scale = (magic_number2 * std).rename('scale')
-#     return loc, scale, 0
-
-
-# def gumbel_iter_linear(ds):
-#     """Follow the steps described in:
-#     Loaiciga, H. A., & Leipnik, R. B. (1999).
-#     Analysis of extreme hydrologic events with Gumbel distributions: marginal and additive cases.
-#     Stochastic Environmental Research and Risk Assessment (SERRA), 13(4), 251–259.
-#     https://doi.org/10.1007/s004770050042
-#     """
-#     # linearize
-#     linearize = lambda a: (np.log(np.log(1/a))).astype(DTYPE)
-#     reduced_variable = linearize(ds['ecdf_gringorten'])
-#     # First fit. Keep only the two first returning DataArrays
-#     estim_slope, estim_intercept = helper.linregress(scipy.stats.linregress,
-#                                               ds['annual_max'],
-#                                               reduced_variable, ['year'])[:2]
-#     # get provisional gumbel parameters
-#     loc_prov = -estim_intercept / estim_slope
-#     scale_prov = -1 / estim_slope
-#     # Analytic probability F(x) from Gumbel CDF
-#     analytic_prob = gumbel_cdf(ds['annual_max'], loc_prov, scale_prov)
-#     # Get the final location and scale parameters
-#     analytic_prob_linear = linearize(analytic_prob)
-#     analytic_slope, analytic_intercept = helper.linregress(scipy.stats.linregress,
-#                                                     ds['annual_max'],
-#                                                     analytic_prob_linear, ['year'])[:2]
-#     loc_final = (-analytic_intercept / analytic_slope).rename('location')
-#     scale_final = (-1 / analytic_slope).rename('scale')
-#     return loc_final, scale_final
-
-
-# def gev_mle_wrapper(ams):
-#     try:
-#         params = scipy.stats.genextreme.fit(ams)
-#     except RuntimeError:
-#         params = (np.nan, np.nan, np.nan)
-#     return params[1], params[2], params[0]
-
-
-# def gev_mle_fit(ds, dtype=DTYPE):
-#     """Employ scipy stats to find the GEV coefficients
-#     """
-#     loc, scale, shape = xr.apply_ufunc(gev_mle_wrapper,
-#                                 ds['annual_max'],
-#                                 input_core_dims=[['year']],
-#                                 output_core_dims=[[], [], []],
-#                                 vectorize=True,
-#                                 dask='allowed',
-#                                 output_dtypes=[dtype, dtype, dtype]
-#                                 )
-#     return loc.rename('location'), scale.rename('scale'), shape.rename('shape')
-
-
-# def gumbel_pwm(ds):
-#     """
-#     Hosking, J. R. M., & Wallis, J. R. (1997).
-#     Appendix: L-moments for some specific distributions.
-#     In Regional Frequency Analysis (pp. 191–209).
-#     Cambridge: Cambridge University Press.
-#     https://doi.org/10.1017/CBO9780511529443.012
-#     """
-#     b0 = b_value(ds, 0)
-#     b1 = b_value(ds, 1)
-#     l1 = b0
-#     l2 = 2 * b1 - b0
-#     scale = gumbel_scale(l2)
-#     loc = gumbel_loc(l1, scale)
-#     # return shape = 0 for consistency
-#     shape = xr.full_like(scale, 0).rename('shape')
-#     return loc.rename('location'), scale.rename('scale'), shape
-
-
-# def frechet_pwm(ds):
-#     """According to [1], the parameters are estimated the
-#     same way as the GEV, the shape is just capped to zero.
-#     Fit according to [2].
-
-#     [1] Koutsoyiannis, D. (2004).
-#     Statistics of extremes and estimation of extreme rainfall: II.
-#     Empirical investigation of long rainfall records.
-#     Hydrological Sciences Journal, 49(4).
-#     https://doi.org/10.1623/hysj.49.4.591.54424
-#     [2] Hosking, J. R. M., & Wallis, J. R. (1997).
-#     Appendix: L-moments for some specific distributions.
-#     In Regional Frequency Analysis (pp. 191–209).
-#     Cambridge: Cambridge University Press.
-#     https://doi.org/10.1017/CBO9780511529443.012
-#     """
-#     b0 = b_value(ds, 0)
-#     b1 = b_value(ds, 1)
-#     b2 = b_value(ds, 2)
-#     l1 = b0
-#     l2 = 2 * b1 - b0
-
-#     raw_shape = gev_shape(b0, b1, b2)
-#     # Shape must be negative for Fréchet
-#     shape = xr.ufuncs.fmin(raw_shape, 0)
-#     # shape = xr.where(raw_shape >= 0,
-#     #                  xr.full_like(raw_shape, 0),
-#     #                  raw_shape)
-#     # print(shape)
-#     scale = xr.where(shape == 0,
-#                      gumbel_scale(l2),
-#                      gev_scale(l2, shape))
-#     loc = xr.where(shape == 0,
-#                    gumbel_loc(l1, scale),
-#                    gev_loc(l1, scale, shape))
-
-#     return loc.rename('location'), scale.rename('scale'), shape.rename('shape')
