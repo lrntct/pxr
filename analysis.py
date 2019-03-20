@@ -31,8 +31,8 @@ ANNUAL_BASENAME = '{}_{}-{}_ams_{}.zarr'
 # Extract
 # EXTRACT = dict(latitude=slice(1.0, -0.25),
 #                longitude=slice(32.5, 35))
-EXTRACT = dict(latitude=slice(90, 45),
-               longitude=slice(0, 45))
+EXTRACT = dict(latitude=slice(90, 80),
+               longitude=slice(0, 10))
 
 # Event durations in hours - has to be adjusted to temporal resolution for the moving window
 # Selected to be equally spaced on a log scale. Manually adjusted from a call to np.geomspace()
@@ -54,7 +54,7 @@ HOURLY_CHUNKS = {'time': -1, 'latitude': 16, 'longitude': 16}
 ERA5_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 20*4, 'longitude': 20*4}
 # When resolution is 1 degree
 ANNUAL_CHUNKS_1DEG = {'year': -1, 'duration': -1, 'latitude': 30, 'longitude': 30}
-EXTRACT_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 30, 'longitude': 30}
+EXTRACT_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 20, 'longitude': 20}
 MIDAS_CHUNKS = {'year': -1, 'duration':-1, 'station': 1}
 GEN_FLOAT_ENCODING = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
 STR_ENCODING = {'dtype': 'U'}
@@ -93,7 +93,7 @@ def step11_arg_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res):
     return xr.concat(da_list, 'duration')
 
 
-def step21_pole_trim(ds):
+def step12_pole_trim(ds):
     # remove north pole to get a dividable latitude number
     lat_second = ds['latitude'][1].item()
     lat_last = ds['latitude'][-1].item()
@@ -101,7 +101,7 @@ def step21_pole_trim(ds):
     return(ds)
 
 
-def step22_rank_ecdf(ds_ams, chunks):
+def step2_rank_ecdf(ds_ams, chunks):
     """Compute the rank of AMS and the empirical probability
     """
     da_ams = ds_ams['annual_max']
@@ -114,15 +114,16 @@ def step22_rank_ecdf(ds_ams, chunks):
     return ds.chunk(chunks)
 
 
-def step23_fit_gev_with_ci(ds, n_sample):
-    """Estimate GEV parameters and their confidence intervals.
-    CI are estimated with the bootstrap method.
+def step3_fit_gev_with_ci(ds, n_sample):
+    """Estimate GEV parameters and their scaling in duration.
+    Confidence intervals are estimated with the bootstrap method.
     """
-    ds['gev'] = ev_fit.fit_gev(ds, DTYPE, n_sample=n_sample, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
-    return ds
+    ds_gev = scaling.scaling_gev(ds, DTYPE, n_sample=n_sample,
+                                 ci_range=[0.9, 0.95, 0.99], shape=-0.114)
+    return xr.merge([ds, ds_gev])
 
 
-def step24_goodness_of_fit(ds, chunks):
+def step4_goodness_of_fit(ds, chunks):
     """Goodness of fit with the Lilliefors test.
     """
     # Compute the CDF
@@ -137,14 +138,6 @@ def step24_goodness_of_fit(ds, chunks):
     return ds
 
 
-def step3_scaling_with_ci(ds, n_sample):
-    """Estimate linear regression and their confidence intervals.
-    CI are estimated with the bootstrap method.
-    """
-    ds['gev_scaling'] = scaling.scaling_gev(ds, DTYPE, n_sample=n_sample, ci_range=[0.9, 0.95, 0.99], shape=-0.114)
-    return ds
-
-
 def to_zarr(ds, path):
     vars_encoding = {v:GEN_FLOAT_ENCODING for v in ds.data_vars.keys()}
     coords_encoding = {k:v for k,v in COORDS_ENCODING.items() if k in ds.coords.keys()}
@@ -153,10 +146,10 @@ def to_zarr(ds, path):
 
 
 def main():
-    # Select the source ('ERA5' or 'MIDAS')
+    # Select the source ('era5' or 'midas')
     SOURCE = 'era5'
     BS_SAMPLE = 1000
-    START = 2000
+    START = 1979
     END = 2018
 
     if SOURCE == 'era5':
@@ -180,25 +173,26 @@ def main():
     path_ranked = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'ranked'))
     path_gev = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'gev'))
     path_gof = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'gof'))
-    path_scaling = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'scaling'))
 
-    with ProgressBar():
+    with ProgressBar(), np.warnings.catch_warnings():
+        # Those warnings are expected.
+        np.warnings.filterwarnings('ignore', r'All-NaN (slice|axis) encountered')
+        np.warnings.filterwarnings('ignore', r'invalid value encountered in log10')
+
         # Get annual maxima #
-        print('## AMS: {} ##'.format(datetime.now()))
+        # print('## AMS: {} ##'.format(datetime.now()))
         # ams = step1_annual_maxs_of_roll_mean(hourly, precip_var, time_var, DURATIONS_ALL, temp_res).chunk(chunk_size)
         # print(ams)
         # to_zarr(ams, ams_path)
 
         # reshape to 1 deg
-        # print(ds_trimmed)
         # ds_r = helper.da_pool(ds_trimmed['annual_max'], .25, 1).to_dataset().chunk(ANNUAL_CHUNKS_1DEG)
         # print(ds_r)
-
 
         ## Rank # For unknown reason Dask distributed create buggy ECDF.
         # ams = xr.open_zarr(ams_path).sel(year=slice(START, END))
         # print('## Rank: {} ##'.format(datetime.now()))
-        # ds_ranked = step22_rank_ecdf(ams, chunk_size)
+        # ds_ranked = step2_rank_ecdf(ams, chunk_size)
         # print(ds_ranked)
         # to_zarr(ds_ranked, path_ranked)
 
@@ -209,24 +203,17 @@ def main():
 
         ## fit EV ##
         print('## Fit EV: {} ##'.format(datetime.now()))
-        ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT]
-        ds_gev = step23_fit_gev_with_ci(ds_ranked, BS_SAMPLE)
+        ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
+        ds_gev = step3_fit_gev_with_ci(ds_ranked, BS_SAMPLE)
+        print(ds_gev)
         to_zarr(ds_gev, path_gev)
 
         ## GoF ##
         print('## Goodness of fit: {} ##'.format(datetime.now()))
         ds_gev = xr.open_zarr(path_gev)
-        ds_gof = step24_goodness_of_fit(ds_gev, chunk_size)
+        ds_gof = step4_goodness_of_fit(ds_gev, chunk_size)
+        print(ds_gof)
         to_zarr(ds_gof, path_gof)
-
-        ## Scaling ##
-        print('## Scaling: {} ##'.format(datetime.now()))
-        ds_gof = xr.open_zarr(path_gof)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
-        ds_scaling = step3_scaling_with_ci(ds_gof, BS_SAMPLE)
-        print(ds_scaling)
-        nan_count = np.isnan(ds_scaling['gev_scaling'].sel(ci='0.005', ev_param='scale', scaling_param='slope')).load()
-        print(nan_count)
-        to_zarr(ds_scaling, path_scaling)
 
 
 if __name__ == "__main__":
