@@ -30,7 +30,7 @@ import postprocessing
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
 # HOURLY_FILE = 'era5_2000-2012_precip.zarr'
 ERA_AMS_FILE = 'era5_1979-2018_ams_gof.zarr'
-MIDAS_AMS_FILE = '../data/MIDAS/midas_1979-2018_ams_scaling.zarr'
+MIDAS_AMS_FILE = '../data/MIDAS/midas_1979-2018_ams_gof.zarr'
 PLOT_DIR = '../plot'
 
 MIDAS_SUM = '../data/midas_sum_uk.tiff'
@@ -533,43 +533,18 @@ def fig_maps_spearman(ds):
                '$\\rho$', 'gev_rho.png', sqr=False)
 
 
-def get_quantile_dict(quantiles, **kwargs):
-    """
-    kwargs: a dict of 'source': (ds, dim)
-    return df_dict: {param: [(source, df), ]}
-    """
-    df_dict = {}
-    for param in ['location', 'scale']:
-        # Actual values of the regression lines
-        df_list = []
-        for source, (ds, dim) in kwargs.items():
-            try:
-                ds_daily = ds.sel(scaling_extent=b'daily')
-            except KeyError:
-                ds_daily = ds.sel(scaling_extent='daily')
-            slope = ds_daily['{}_line_slope'.format(param)]
-            intercept = ds_daily['{}_line_intercept'.format(param)]
-            log_reg = np.log10(10**intercept * ds_daily['duration']**slope)
-            diff = log_reg - ds_daily['log_{}'.format(param)]
-            diff_q = diff.compute().quantile(quantiles, dim=dim)
-            df_q = diff_q.to_dataset('quantile').to_dataframe()
-            df_list.append((source, df_q))
-        df_dict[param] = df_list
-    return df_dict
-
-
 def fig_scaling_differences_all(ds_era, ds_midas, fig_name):
-    quantiles = [0.01, 0.5, 0.99]
+    quantiles = [0.025, 0.5, 0.975]
 
     ds_era_sel = ds_era.sel(latitude=ds_midas['latitude'],
-                            longitude=ds_midas['longitude'],
+                            longitude=convert_lon(ds_midas['longitude']),
                             method='nearest')
 
     q_extent_dict = {
-        'Whole world': get_quantile_dict(quantiles,
+        'Whole world': postprocessing.get_quantile_dict(quantiles,
                                          ERA5=(ds_era, ['latitude', 'longitude']),
                                          ),
-        'MIDAS stations': get_quantile_dict(quantiles,
+        'MIDAS stations': postprocessing.get_quantile_dict(quantiles,
                                             ERA5=(ds_era_sel, ['station']),
                                             MIDAS=(ds_midas, ['station'])
                                             ),
@@ -595,7 +570,7 @@ def fig_scaling_differences_all(ds_era, ds_midas, fig_name):
             df_list = [i['df_list'] for i in q_list
                         if i['extent'] == extent
                         and i['param'] == param][0]
-            plot_scaling_differences(param, df_list, ax, ylim=ylim)
+            plot_scaling_differences(param, df_list, ax, ylim=False)
             if row_num == 0:
                 ax.set_title(extent)
 
@@ -635,7 +610,7 @@ def plot_scaling_differences(param, df_list, ax, ylim=False):
         q_min = quantiles[0]
         q_max = quantiles[-1]
         title = '{} ${}$'.format(param.title(), param_symbols[param])
-        fill_label = '{} Q{} to Q{}'.format(source, int(q_min*100), int(q_max*100))
+        fill_label = '{:.0%} of {}'.format(q_max-q_min, source)
         df[0.5].plot(logx=True, logy=False, ax=ax,
                         linewidth=1, color=colors[source], zorder=10,
                     #  title=title,
@@ -644,7 +619,7 @@ def plot_scaling_differences(param, df_list, ax, ylim=False):
                         facecolor=colors[source], alpha=0.2, zorder=1,
                         label=fill_label)
     ax.axhline(0, linewidth=0.1, color='0.5')
-    ax.axvline(24, linewidth=0.1, color='0.5')
+    # ax.axvline(24, linewidth=0.1, color='0.5')
     if ylim:
         ax.set_ylim(ylim[param])
     # ax.set_yticks([ 0.0, 0.5])
@@ -729,6 +704,22 @@ def table_ks_count(ds, dim):
     print(ds['Dcrit'].load())
     q =  ks_mean.load().quantile([0.95, 0.99], dim=dim)
     print(q)
+
+
+def table_sizing_values(ds, coords, d):
+    """Values over for the culvert sizing exercise.
+    """
+    ds_sel = ds.sel(latitude=coords[0],
+                    longitude=convert_lon(coords[1]),
+                    method='nearest').load()
+    ds_sel = ds_sel.sel(ci=['estimate', '0.025', '0.975'],
+                        duration=d,
+                        ev_param=['location', 'scale'])
+    # fitted
+    da_fitted = ds_sel['gev']
+    print(da_fitted)
+    print(ds_sel['gev_scaled'])
+    print(ds_sel['gev_scaling'].sel(scaling_param=['slope', 'intercept']))
 
 
 def prepare_midas_mean(ds_era, ds_midas, ds_midas_mean):
@@ -1007,7 +998,8 @@ def plot_intensities_errors_percent(da, ylabel, fig_name):
 
 def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
-    ds_midas = xr.open_zarr(MIDAS_AMS_FILE)
+    # Drop Gibraltar
+    ds_midas = xr.open_zarr(MIDAS_AMS_FILE).drop([1585], dim='station')
 
     print(ds_era)
     # ams_midas = ds_midas['annual_max']
@@ -1015,7 +1007,7 @@ def main():
     # for d in nan_ams_midas['duration'].values:
     #     print(nan_ams_midas.sel(duration=d).load())
 
-    fig_map_KS(ds_era)
+    # fig_map_KS(ds_era)
 
     # fig_maps_gev24h(ds_era)
     # fig_maps_gev_scaled24h(ds_era)
@@ -1029,7 +1021,7 @@ def main():
 
     # fig_scaling_gradients_maps(ds_era)
     # fig_scaling_gradients_ratio_maps(ds_era)
-    # fig_scaling_differences_all(ds_era, ds_midas, 'scaling_diff.pdf')
+    # fig_scaling_differences_all(ds_era, ds_midas, 'scaling_diff_all_1979-2018.pdf')
     # fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)
 
@@ -1041,6 +1033,8 @@ def main():
     # ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
     # print(ds_combined['gev_scaled'].sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
     # plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
+
+    table_sizing_values(ds_era, STUDY_SITES['Jakarta'], d=2)
 
     ##############
     # ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)

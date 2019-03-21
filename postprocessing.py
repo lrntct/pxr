@@ -143,31 +143,6 @@ def ds_to_df(ds, station_coord):
     return dict_df
 
 
-def get_quantile_dict(quantiles, **kwargs):
-    """
-    kwargs: a dict of 'source': (ds, dim)
-    return df_dict: {param: [(source, df), ]}
-    """
-    df_dict = {}
-    for param in ['location', 'scale']:
-        # Actual values of the regression lines
-        df_list = []
-        for source, (ds, dim) in kwargs.items():
-            try:
-                ds_daily = ds.sel(scaling_extent=b'daily')
-            except KeyError:
-                ds_daily = ds.sel(scaling_extent='daily')
-            slope = ds_daily['{}_line_slope'.format(param)]
-            intercept = ds_daily['{}_line_intercept'.format(param)]
-            log_reg = np.log10(10**intercept * ds_daily['duration']**slope)
-            diff = log_reg - ds_daily['log_{}'.format(param)]
-            diff_q = diff.compute().quantile(quantiles, dim=dim)
-            df_q = diff_q.to_dataset('quantile').to_dataframe()
-            df_list.append((source, df_q))
-        df_dict[param] = df_list
-    return df_dict
-
-
 def prepare_midas_mean(ds_era, ds_midas, ds_midas_mean):
     keep_vars = ['location', 'scale', 'log_location', 'log_scale',
                  'location_line_slope', 'scale_line_slope',
@@ -233,8 +208,6 @@ def estimate_intensities(ds_era, ds_gauges):
     ds_gauges = ds_gauges.reset_coords(['latitude', 'longitude'])
     gauges_sel = np.logical_and(np.isfinite(ds_gauges['latitude']), np.isfinite(ds_gauges['longitude']))
     ds_gauges = ds_gauges.where(gauges_sel, drop=True)
-    # Drop Gibraltar
-    ds_gauges = ds_gauges.drop([1585], dim='station')
     # Convert gauges longitudes
     ds_gauges['longitude'] = convert_lon(ds_gauges['longitude'])
     # Select the cells above the stations
@@ -339,6 +312,30 @@ def adequacy(da_mape, threshold=.2):
         da_adequate = da_sel <= threshold
         adq = da_adequate.where(da_adequate, drop=True)
         print(adq)
+
+
+def get_quantile_dict(quantiles, **kwargs):
+    """
+    kwargs: a dict of 'source': (ds, dim)
+    return df_dict: {param: [(source, df), ]}
+    """
+    df_dict = {}
+    for param in ['location', 'scale']:
+        # Actual values of the regression lines
+        df_list = []
+        for source, (ds, dim) in kwargs.items():
+            da_gev = ds['gev'].sel(ci='estimate', ev_param=param)
+            da_scaled = ds['gev_scaled'].sel(ci='estimate', ev_param=param)
+            diff = np.log10(da_scaled / da_gev)
+            # diff = da_scaled - da_gev
+            diff_q = diff.compute().quantile(quantiles, dim=dim)
+            df_q = diff_q.to_dataset('quantile').to_dataframe()
+            df_list.append((source, df_q))
+        df_dict[param] = df_list
+    return df_dict
+
+
+
 
 
 def main():
