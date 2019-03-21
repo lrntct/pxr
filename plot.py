@@ -991,20 +991,52 @@ def plot_intensities_errors_percent(da, ylabel, fig_name):
 
 
 def plot_scaling_intensity_error(ds, dim, fig_name):
+    # calculate intensity for given duration and return period
+    da_list = []
+    for source in ['gev','gev_scaled']:
+        # 95% CI
+        da_gev = ds[source].sel(ci=['estimate', '0.025', '0.975'])
+        i_list = []
+        for T in [2,10,50,100,500,1000]:
+            intensity = postprocessing.estimate_intensity(da_gev, ds['n_obs'], T)
+            intensity = intensity.expand_dims('T')
+            intensity.coords['T'] = [T]
+            i_list.append(intensity)
+        da_i = xr.concat(i_list, dim='T').rename(source)
+        da_list.append(da_i)
+    ds_i = xr.merge(da_list)
+
     # Computation of MPE
-    orig = ds['gev']
-    scaled = ds['gev_scaled']
-    pe = ((orig - scaled) / orig)
-    mpe_i = pe.mean(dim=dim)
-    print(mpe_i)
+    orig = ds_i['gev']
+    scaled = ds_i['gev_scaled']
+    pe = (scaled - orig) / orig
+    mpe_i = pe.mean(dim=dim).rename('mpe_i').sel(ci='estimate').load()
+    # print(mpe_i)
+    print(mpe_i.min())
+    print(mpe_i.max())
+
     # Plot
-    # sns.set_style("ticks")
-    # sns.set_context("paper")
-    # width = 6.5
-    # aspect = 1.5
-    # col_wrap = 3
-    # height = (6/aspect)/col_wrap
-    # df = da.to_dataset(dim='source').to_dataframe().reset_index()
+    sns.set_style("ticks")
+    sns.set_context("paper")
+    width = 4
+    aspect = 2
+    height = width / aspect
+    df = mpe_i.to_dataframe().reset_index()
+    # print(df.head())
+    ax = sns.lineplot(data=df, x='duration', y='mpe_i', style='T', color='0.3', ci=None)
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y)))
+    ax.set_ylabel('MPE')
+    ax.set_xscale('log')
+    set_logd_xticks(ax)
+    fig = plt.gcf()
+    lines, labels = ax.get_legend_handles_labels()
+    lgd = fig.legend(lines, labels, loc='upper right', ncol=1)
+    ax.get_legend().remove()
+    fig.set_size_inches(width, height)
+    plt.tight_layout()
+    plt.subplots_adjust(right=.75, wspace=None, hspace=None)
+    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.close()
 
 
 def main():
@@ -1048,16 +1080,16 @@ def main():
     # table_sizing_values(ds_era, STUDY_SITES['Jakarta'], d=2)
 
     ##############
-    ds_i = postprocessing.estimate_intensities_errors(ds_era, ds_midas)
-    print(ds_i)
+    # ds_i = postprocessing.estimate_intensities_errors(ds_era, ds_midas)
+    # print(ds_i)
     # scatter_intensity(ds_i['intensity'], 'scatter_intensity.pdf')
     # plot_ARF(ds_i['arf'], 'arf_scaling.pdf')
     # plot_intensities_AE(ds_i['mae'], 'MAE (mm/h)', 'MAE_intensities.pdf')
     # plot_intensities_errors_percent(ds_i['mape'], 'MAPE', 'MAPE_intensities.pdf')
     # postprocessing.adequacy(ds_i['mape'], threshold=.2)
-    plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
+    # plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
 
-    # plot_scaling_intensity_error(ds_era, dim=['longitude', 'latitude'], fig_name='MPE_intensities_scaled.pdf')
+    plot_scaling_intensity_error(ds_era, dim=['longitude', 'latitude'], fig_name='MPE_intensities_scaled.pdf')
 
     # single_map(ds_era['scaling_pearsonr'],
     #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",

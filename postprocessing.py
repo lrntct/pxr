@@ -287,11 +287,11 @@ def estimate_intensities_errors(ds_era, ds_gauges):
         mae = mae.expand_dims('source')
         mae.coords['source'] = [reg_source]
         # MAPE
-        mape = np.abs((i_midas - i_source) / i_midas).mean(dim='station')
+        mape = np.abs((i_source - i_midas) / i_midas).mean(dim='station')
         mape = mape.expand_dims('source').rename('mape')
         mape.coords['source'] = [reg_source]
         # MPE + ci
-        pe = (i_midas - i_source) / i_midas
+        pe = (i_source - i_midas) / i_midas
         mpe = pe.mean(dim='station').rename('mpe')
         mpe = mpe.expand_dims('source')
         mpe.coords['source'] = [reg_source]
