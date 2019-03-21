@@ -28,10 +28,11 @@ import postprocessing
 
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
-# HOURLY_FILE = 'era5_2000-2012_precip.zarr'
 ERA_AMS_FILE = 'era5_1979-2018_ams_gof.zarr'
 MIDAS_AMS_FILE = '../data/MIDAS/midas_1979-2018_ams_gof.zarr'
 PLOT_DIR = '../plot'
+ERA_PRECIP_FILE = 'era5_1979-2018_precip.zarr'
+MIDAS_PRECIP_FILE = '../data/MIDAS/midas_1979-2018_precip_select.zarr'
 
 MIDAS_SUM = '../data/midas_sum_uk.tiff'
 MIDAS_STATIONS = '../data/MIDAS/midas.gpkg'
@@ -1039,16 +1040,41 @@ def plot_scaling_intensity_error(ds, dim, fig_name):
     plt.close()
 
 
-def main():
-    ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
-    # Drop Gibraltar
-    ds_midas = xr.open_zarr(MIDAS_AMS_FILE).drop([1585], dim='station')
+def plot_hyetographs(ds_era, ds_midas, station_num, start, end, fig_name):
+    ds_midas = ds_midas.sel(station=station_num).reset_coords(['latitude', 'longitude'])
+    ds_era = ds_era.sel(latitude=ds_midas['latitude'],
+                        longitude=postprocessing.convert_lon(ds_midas['longitude']),
+                        method='nearest')
+    precip_era = ds_era['precipitation'].rename('precip').sortby('time')
+    precip_midas = ds_midas['prcp_amt'].rename('precip').rename({'end_time': 'time'}).sortby('time')
+    # precip = xr.merge([precip_era, precip_midas])
+    df_era = precip_era.sel(time=slice(start, end)).to_dataframe()
+    df_midas = precip_midas.sel(time=slice(start, end)).to_dataframe()
+    station_name = df_midas['src_name'][0].decode('utf8')
+    # plot
+    ax = df_era['precip'].plot(zorder=10, label='ERA5')
+    df_midas['precip'].plot(ax=ax, zorder=0, label='MIDAS')
+    ax.set_ylabel("P (mm/h)")
+    ax.set_title("Station #{} '{}'".format(station_num, station_name))
+    fig = plt.gcf()
+    lines, labels = ax.get_legend_handles_labels()
+    lgd = fig.legend(lines, labels, loc='lower center', ncol=2)
+    plt.subplots_adjust(bottom=.22, wspace=None, hspace=None)
+    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.close()
 
-    print(ds_era)
-    # ams_midas = ds_midas['annual_max']
-    # nan_ams_midas = np.isnan(ams_midas).sum(dim=['year'])
-    # for d in nan_ams_midas['duration'].values:
-    #     print(nan_ams_midas.sel(duration=d).load())
+
+
+def main():
+    # ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
+    # Drop Gibraltar
+    # ds_midas = xr.open_zarr(MIDAS_AMS_FILE).drop([1585], dim='station')
+    # print(ds_era)
+    era_precip = xr.open_zarr(os.path.join(DATA_DIR, ERA_PRECIP_FILE))
+    midas_precip = xr.open_zarr(MIDAS_PRECIP_FILE)
+    # plot_hyetographs(era_precip, midas_precip, station_num=23, start='1980-01', end='1980-12', fig_name='hyetographs_23_1980.pdf')
+    # plot_hyetographs(era_precip, midas_precip, station_num=23, start='1979', end='2018', fig_name='hyetographs_23_1979-2018.pdf')
+    plot_hyetographs(era_precip, midas_precip, station_num=23, start='2017', end='2018', fig_name='hyetographs_23_2017-2018.pdf')
 
     # fig_map_KS(ds_era)
 
@@ -1089,7 +1115,7 @@ def main():
     # postprocessing.adequacy(ds_i['mape'], threshold=.2)
     # plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
 
-    plot_scaling_intensity_error(ds_era, dim=['longitude', 'latitude'], fig_name='MPE_intensities_scaled.pdf')
+    # plot_scaling_intensity_error(ds_era, dim=['longitude', 'latitude'], fig_name='MPE_intensities_scaled.pdf')
 
     # single_map(ds_era['scaling_pearsonr'],
     #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
