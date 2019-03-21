@@ -9,16 +9,14 @@ import datetime
 import urllib3.exceptions
 
 import xarray as xr
+import zarr
 import cdsapi
 import humanize
 import requests
 
-import read_grib
-
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/monthly_dl'
 ZARR_DIR = '/home/lunet/gylc4/geodata/ERA5/monthly_zarr'
 
-# FORMAT = 'grib'
 FORMAT = 'netcdf'
 PRODUCT = 'reanalysis-era5-single-levels'
 VARIABLE = [
@@ -29,9 +27,13 @@ TYPE = 'reanalysis'
 MONTH = [str(i+1).zfill(2) for i in range(12)]
 DAY = [str(i+1).zfill(2) for i in range(31)]
 TIME = ['{}:00'.format(i).zfill(5) for i in range(24)]
-START_YEAR = 1989
-END_YEAR = 1989
+START_YEAR = 2018
+END_YEAR = 2018
 
+DTYPE = 'float32'
+CHUNKS = {'time': -1, 'latitude': 16, 'longitude': 16}
+GEN_FLOAT_ENCODING = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
+ENCODING = {'precipitation': GEN_FLOAT_ENCODING}
 
 def get_url(year, month):
     cds_client = cdsapi.Client()
@@ -81,21 +83,21 @@ def dl_cdsapi(year_month):
             except (requests.exceptions.ReadTimeout, urllib3.exceptions.ReadTimeoutError) as e:
                 continue
             dl_size = f.tell()
-    # convert from kg to mm (per hr), save to zarr and delete netcdf
-    ds = xr.open_dataset(disk_url).chunk(read_grib.ZARR_CHUNKS).rename({'tp': 'precipitation'})
+    # convert from m to mm (per hr), save to zarr and delete netcdf
+    ds = xr.open_dataset(disk_url).chunk(CHUNKS).rename({'tp': 'precipitation'})
     ds = ds * 1000
     print(ds)
     zarr_filename = filename = '{}-{}.zarr'.format(year_month[0], year_month[1])
     out_file_path = os.path.join(ZARR_DIR, zarr_filename)
-    ds.to_zarr(out_file_path, mode='w', encoding=read_grib.ZARR_ENCODING)
+    ds.to_zarr(out_file_path, mode='w', encoding=ENCODING)
     os.remove(disk_url)
 
 
 def main():
-    # pool = mp.Pool(12)
-    # years = range(START_YEAR, END_YEAR+1)
-    # year_month = [(y, m) for y in years for m in MONTH]
-    # pool.map(dl_cdsapi, year_month)
+    pool = mp.Pool(12)
+    years = range(START_YEAR, END_YEAR+1)
+    year_month = [(y, m) for y in years for m in MONTH]
+    pool.map(dl_cdsapi, year_month)
 
 
 if __name__ == "__main__":
