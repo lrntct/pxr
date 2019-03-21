@@ -182,7 +182,7 @@ def f_c3_estim(shape):
     return 0.8046 - 2.8890*shape + 8.7874*shape**2 - 10.375*shape**3
 
 
-def gev_quantile_var_fixed_shape(T, c1, c2, c3, ds):
+def gev_quantile_var_fixed_shape(T, c1, c2, c3, da_gev, n_obs):
     """Return the variance of the GEV quantile for a given return period.
     See:
     Lu, L.-H., & Stedinger, J. R. (1992).
@@ -191,8 +191,8 @@ def gev_quantile_var_fixed_shape(T, c1, c2, c3, ds):
     Journal of Hydrology, 138(1–2), 247–267.
     http://doi.org/10.1016/0022-1694(92)90167-T
     """
-    n_obs = len(ds['year'])
-    shape = ds['gev'].sel(ev_param='shape', ci='value')
+    shape = da_gev.sel(ev_param='shape', ci='estimate')
+    scale = da_gev.sel(ev_param='scale', ci='estimate')
     y = xr.where(shape == 0,
                  y_gumbel(T),
                  y_gev_nonzero(T, shape))

@@ -201,7 +201,36 @@ def prepare_midas_mean(ds_era, ds_midas, ds_midas_mean):
     return ds_all
 
 
-def estimate_intensities(ds_era, ds_gauges):
+def estimate_intensity(gev_params, da_n, T):
+    """Estimate intensity for return period T and its CI.
+    gev_params: a DataArray of GEV parameters
+    """
+    # Approximate the number of observations
+    n_obs = da_n.min().values.item()
+    # Get intensities
+    loc = gev_params.sel(ev_param='location', ci='estimate')
+    scale = gev_params.sel(ev_param='scale', ci='estimate')
+    shape = gev_params.sel(ev_param='shape', ci='estimate')
+    i_estimate = ev_quantiles.gev_quantile(T, loc, scale, shape).rename('intensity')
+    # Confidence interval
+    var_i = ev_quantiles.gev_quantile_var_fixed_shape(T, c1=1.1412, c2=0.8216, c3=1.2546,
+                                         da_gev=gev_params, n_obs=n_obs)
+    ci_i_list = []
+    for ci in gev_params['ci']:
+        ci = ci.item()
+        if ci in ['estimate', '0.500']:
+            i_ci = i_estimate
+        else:
+            t_quantile = scipy.stats.t.ppf(float(ci), n_obs-2)
+            i_ci = i_estimate + t_quantile * np.sqrt(var_i/n_obs)
+        i_ci = i_ci.expand_dims('ci')
+        i_ci.coords['ci'] = [ci]
+        ci_i_list.append(i_ci)
+    intensity = xr.concat(ci_i_list, dim='ci')
+    return intensity
+
+
+def estimate_intensities_errors(ds_era, ds_gauges):
     """
     """
     # keep only stations with coordinates
@@ -215,8 +244,6 @@ def estimate_intensities(ds_era, ds_gauges):
                             longitude=ds_gauges['longitude'],
                             method='nearest')
     ds_list = []
-    # print(ds_era_sel['longitude'])
-    # print(ds_gauges['longitude'])
     for ds, name in zip([ds_era_sel, ds_gauges], ['ERA5', 'MIDAS']):
         # Delete coordinates (no longer used)
         ds = ds.drop(['latitude', 'longitude', 'src_name'])
@@ -227,36 +254,20 @@ def estimate_intensities(ds_era, ds_gauges):
     ds = xr.merge(ds_list)
 
     # GEV param from scaling
-    sel_dict = dict(source='ERA5', ev_param=['location', 'scale'])
-    slope = ds['gev_scaling'].sel(scaling_param='slope', **sel_dict)
-    intercept = ds['gev_scaling'].sel(scaling_param='intercept', **sel_dict)
-    params_from_scaling = (10**intercept) * ds['duration']**slope
-    params_from_scaling = params_from_scaling.expand_dims('source')#.drop('scaling_param')
-    params_from_scaling.coords['source'] = ['ERA5_scaled']
-    # Add non-scaled shape.
-    # print(params_from_scaling)
-    da_shape =  ds['gev'].sel(source='ERA5', ev_param='shape')
-    da_shape = da_shape.expand_dims(['source', 'ev_param'])
-    da_shape.coords['source'] = ['ERA5_scaled']
-    da_shape.coords['ev_param'] = ['shape']
-    # print(da_shape)
-    params_from_scaling = xr.concat([params_from_scaling, da_shape], dim='ev_param')
-    # print(params_from_scaling)
-    gev_params = xr.concat([params_from_scaling, ds['gev']], dim='source')
-    # print(gev_params)
+    gev_scaled = ds['gev_scaled'].sel(source='ERA5').expand_dims('source')
+    gev_scaled.coords['source'] = ['ERA5_scaled']
+    gev_params = xr.concat([gev_scaled, ds['gev']], dim='source')
 
     # calculate intensity for given duration and return period
     da_list = []
     for T in [2,10,50,100,500,1000]:
-        loc = gev_params.sel(ev_param='location', ci='estimate')
-        scale = gev_params.sel(ev_param='scale', ci='estimate')
-        shape = gev_params.sel(ev_param='shape', ci='estimate')
-        intensity = ev_quantiles.gev_quantile(T, loc, scale, shape).rename('intensity')
+        intensity = estimate_intensity(gev_params, ds['n_obs'], T)
         intensity = intensity.expand_dims('T')
         intensity.coords['T'] = [T]
         da_list.append(intensity)
-    da_i = xr.concat(da_list, dim='T').drop(['ci'])
+    da_i = xr.concat(da_list, dim='T').sel(ci='estimate').drop('ci')
     ds_i = da_i.to_dataset()
+    # print(ds_i)
 
     # Robust regression and MAE
     new_sources = []
@@ -280,15 +291,11 @@ def estimate_intensities(ds_era, ds_gauges):
         mape = mape.expand_dims('source').rename('mape')
         mape.coords['source'] = [reg_source]
         # MPE + ci
-        pe = ((i_midas - i_source) / i_midas).load()
-        # pe_quant = pe.quantile([0.025, 0.975], dim='station')  # 95% CI
-        # pe_quant = pe_quant.expand_dims('source').rename('mpe')
-        # pe_ci_l = pe_quant.sel(quantile=0.025).drop('quantile')
-        # pe_ci_h = pe_quant.sel(quantile=0.975).drop('quantile')
+        pe = (i_midas - i_source) / i_midas
         mpe = pe.mean(dim='station').rename('mpe')
         mpe = mpe.expand_dims('source')
         mpe.coords['source'] = [reg_source]
-        # CI
+        # CI of mean
         pe_std = pe.std(dim='station')
         n = len(pe['station'])
         t_quantile = scipy.stats.t.ppf(0.975, n-1)  # 95% CI

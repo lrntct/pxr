@@ -61,13 +61,6 @@ C_PRIMARY_2 = '#33a02c'
 C_SECONDARY_2 = '#89c653'
 
 
-def convert_lon(longitude):
-    """convert negative longitude into 360 longitude
-    """
-    return xr.where(longitude < 0, longitude + 360, longitude)
-    # return np.where(longitude < 0, longitude + 360, longitude)
-
-
 def set_logd_xticks(ax, xmin=min(XTICKS), xmax=max(XTICKS)):
     xticks = [i for i in XTICKS if i <= xmax and i >= xmin]
     ax.set_xlim(xmin, xmax)
@@ -155,7 +148,7 @@ def get_site_list(ds, name_col, use_only=None):
                               ds['latitude'].values,
                               ds['longitude'].values):
         if name in use_only:
-            sites[name] = (lat, convert_lon(lon))
+            sites[name] = (lat, postprocessing.convert_lon(lon))
     return sites
 
 
@@ -537,7 +530,7 @@ def fig_scaling_differences_all(ds_era, ds_midas, fig_name):
     quantiles = [0.025, 0.5, 0.975]
 
     ds_era_sel = ds_era.sel(latitude=ds_midas['latitude'],
-                            longitude=convert_lon(ds_midas['longitude']),
+                            longitude=postprocessing.convert_lon(ds_midas['longitude']),
                             method='nearest')
 
     q_extent_dict = {
@@ -710,7 +703,7 @@ def table_sizing_values(ds, coords, d):
     """Values over for the culvert sizing exercise.
     """
     ds_sel = ds.sel(latitude=coords[0],
-                    longitude=convert_lon(coords[1]),
+                    longitude=postprocessing.convert_lon(coords[1]),
                     method='nearest').load()
     ds_sel = ds_sel.sel(ci=['estimate', '0.025', '0.975'],
                         duration=d,
@@ -742,7 +735,7 @@ def prepare_midas_mean(ds_era, ds_midas, ds_midas_mean):
             site_num = i+1
             ds_s = ds_midas[keep_vars].sel(station=s, drop=True)
             site_lat = ds_s['latitude'].values
-            site_lon = convert_lon(ds_s['longitude'].values)
+            site_lon = postprocessing.convert_lon(ds_s['longitude'].values)
             # Add a source coordinate
             ds_s = ds_s.expand_dims(['source', 'pair'])
             ds_s.coords['source'] = ['MIDAS s'+str(site_num)]
@@ -976,6 +969,7 @@ def plot_intensities_errors_percent(da, ylabel, fig_name):
     dur_min = 1
     dur_max = 24
     da_sel = da.sel(duration=slice(dur_min, dur_max))
+    print(da_sel)
     fg = intensities_errors(da_sel)
     # plot +/1 20% error band
     err_band = 0.2
@@ -994,6 +988,23 @@ def plot_intensities_errors_percent(da, ylabel, fig_name):
     plt.subplots_adjust(bottom=.22, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
     plt.close()
+
+
+def plot_scaling_intensity_error(ds, dim, fig_name):
+    # Computation of MPE
+    orig = ds['gev']
+    scaled = ds['gev_scaled']
+    pe = ((orig - scaled) / orig)
+    mpe_i = pe.mean(dim=dim)
+    print(mpe_i)
+    # Plot
+    # sns.set_style("ticks")
+    # sns.set_context("paper")
+    # width = 6.5
+    # aspect = 1.5
+    # col_wrap = 3
+    # height = (6/aspect)/col_wrap
+    # df = da.to_dataset(dim='source').to_dataframe().reset_index()
 
 
 def main():
@@ -1034,18 +1045,19 @@ def main():
     # print(ds_combined['gev_scaled'].sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
     # plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
 
-    table_sizing_values(ds_era, STUDY_SITES['Jakarta'], d=2)
+    # table_sizing_values(ds_era, STUDY_SITES['Jakarta'], d=2)
 
     ##############
-    # ds_i = postprocessing.estimate_intensities(ds_era, ds_midas)
-    # print(ds_i)
+    ds_i = postprocessing.estimate_intensities_errors(ds_era, ds_midas)
+    print(ds_i)
     # scatter_intensity(ds_i['intensity'], 'scatter_intensity.pdf')
     # plot_ARF(ds_i['arf'], 'arf_scaling.pdf')
     # plot_intensities_AE(ds_i['mae'], 'MAE (mm/h)', 'MAE_intensities.pdf')
     # plot_intensities_errors_percent(ds_i['mape'], 'MAPE', 'MAPE_intensities.pdf')
     # postprocessing.adequacy(ds_i['mape'], threshold=.2)
-    # plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
+    plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
 
+    # plot_scaling_intensity_error(ds_era, dim=['longitude', 'latitude'], fig_name='MPE_intensities_scaled.pdf')
 
     # single_map(ds_era['scaling_pearsonr'],
     #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
