@@ -487,6 +487,22 @@ def fig_map_KS(ds):
         fig_name='D_1979-2018_{}_dmean.png'.format(int(alpha*100)))
 
 
+def fig_map_filliben(ds):
+    """create maps of the Kolmogorov-Smirnov / Lilliefors test statistic
+    """
+    alpha = 0.05
+    DURATION = 2
+    Dcrit = ds['filliben_crit'].sel(significance_level=alpha).values
+    Dmean = ds['filliben_stat'].mean(dim='duration')
+    single_map(Dmean,
+        # title='Lilliefors test statistic (1979-2018, mean on $d$, $\\alpha=${})'.format(alpha),
+        title='',
+        cbar_label="Filliben's $r (\\alpha={})$".format(alpha),
+        center=Dcrit,
+        reverse=False,
+        fig_name='filliben_1979-2018_{}_dmean.png'.format(int(alpha*100)))
+
+
 def fig_maps_gev24h(ds):
     da_loc = ds['gev'].sel(ci='estimate', duration=24, ev_param='location').rename('location')
     da_scale = ds['gev'].sel(ci='estimate', duration=24, ev_param='scale').rename('scale')
@@ -968,15 +984,17 @@ def plot_intensities_AE(da, ylabel, fig_name):
 
 def plot_intensities_errors_percent(da, ylabel, fig_name):
     dur_min = 1
-    dur_max = 24
+    dur_max = 360
     da_sel = da.sel(duration=slice(dur_min, dur_max))
     print(da_sel)
     fg = intensities_errors(da_sel)
+
+    fg = fg.map(plt.axhline, y=0, color='0.8', linewidth=0.5, zorder=0)
     # plot +/1 20% error band
     err_band = 0.2
-    fg = fg.map(plt.axhline, y=err_band, color='0.8', linewidth=1., linestyle='dashed', zorder=0)
-    fg = fg.map(plt.axhline, y=-err_band, color='0.8', linewidth=1., linestyle='dashed', zorder=0,
-                label='$\pm${:.0%} error band'.format(err_band))
+    # fg = fg.map(plt.axhline, y=err_band, color='0.8', linewidth=1., linestyle='dashed', zorder=0)
+    # fg = fg.map(plt.axhline, y=-err_band, color='0.8', linewidth=1., linestyle='dashed', zorder=0,
+    #             label='$\pm${:.0%} error band'.format(err_band))
     # polish plot
     fg.set_ylabels(ylabel)
     for ax in fg.axes.flatten():
@@ -1066,17 +1084,18 @@ def plot_hyetographs(ds_era, ds_midas, station_num, start, end, fig_name):
 
 
 def main():
-    # ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
+    ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
     # Drop Gibraltar
-    # ds_midas = xr.open_zarr(MIDAS_AMS_FILE).drop([1585], dim='station')
+    ds_midas = xr.open_zarr(MIDAS_AMS_FILE).drop([1585], dim='station')
     # print(ds_era)
-    era_precip = xr.open_zarr(os.path.join(DATA_DIR, ERA_PRECIP_FILE))
-    midas_precip = xr.open_zarr(MIDAS_PRECIP_FILE)
+    # era_precip = xr.open_zarr(os.path.join(DATA_DIR, ERA_PRECIP_FILE))
+    # midas_precip = xr.open_zarr(MIDAS_PRECIP_FILE)
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='1980-01', end='1980-12', fig_name='hyetographs_23_1980.pdf')
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='1979', end='2018', fig_name='hyetographs_23_1979-2018.pdf')
-    plot_hyetographs(era_precip, midas_precip, station_num=23, start='2017', end='2018', fig_name='hyetographs_23_2017-2018.pdf')
+    # plot_hyetographs(era_precip, midas_precip, station_num=23, start='2017', end='2018', fig_name='hyetographs_23_2017-2018.pdf')
 
-    # fig_map_KS(ds_era)
+    fig_map_KS(ds_era)
+    fig_map_filliben(ds_era)
 
     # fig_maps_gev24h(ds_era)
     # fig_maps_gev_scaled24h(ds_era)
@@ -1088,8 +1107,6 @@ def main():
     # fig_maps_rsquared(ds_era)
     # fig_maps_spearman(ds_era)
 
-    # fig_scaling_gradients_maps(ds_era)
-    # fig_scaling_gradients_ratio_maps(ds_era)
     # fig_scaling_differences_all(ds_era, ds_midas, 'scaling_diff_all_1979-2018.pdf')
     # fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)

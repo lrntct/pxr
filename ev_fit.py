@@ -64,6 +64,17 @@ def pp_weibull(rank, n_obs):
     return rank / (n_obs + 1)
 
 
+def pp_cunnane(rank, n_obs):
+    """The Cunnane plotting position.
+    Recommended for GEV by:
+    Wilks, D. S. (2011).
+    Empirical Distributions and Exploratory Data Analysis.
+    International Geophysics, 100, 23–70.
+    https://doi.org/10.1016/B978-0-12-385022-5.00003-8
+    """
+    return (rank - 0.4) / (n_obs + 0.2)
+
+
 @nb.njit()
 def pp_gringorten(rank, n_obs):
     """Return the Gringorten plotting position

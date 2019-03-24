@@ -161,17 +161,17 @@ def step2_rank_ecdf(ds_ams, chunks):
     return ds.chunk(chunks)
 
 
-def step3_fit_gev_with_ci(ds, n_sample):
+def step3_fit_gev_with_ci(ds, n_sample, ev_shape=None):
     """Estimate GEV parameters and their scaling in duration.
     Confidence intervals are estimated with the bootstrap method.
     """
     ds_gev = ev_fit.gev_fit_scale(ds, DTYPE, n_sample=n_sample,
-                                  ci_range=[0.9, 0.95, 0.99], shape=-0.114)
+                                  ci_range=[0.9, 0.95, 0.99], shape=ev_shape)
     return xr.merge([ds, ds_gev])
 
 
-def step4_goodness_of_fit(ds, chunks):
-    """Goodness of fit with the Lilliefors test.
+def step4_goodness_of_fit(ds, chunks, ev_shape=None):
+    """Goodness of fit.
     """
     # Compute the CDF
     loc = ds['gev'].sel(ci='estimate', ev_param='location')
@@ -181,7 +181,15 @@ def step4_goodness_of_fit(ds, chunks):
     ds['cdf'] = ev_fit.gev_cdf(da_ams, loc, scale, shape).transpose(*da_ams.dims)
     # Lilliefors
     ds['KS_D'] = gof.KS_test(ds['ecdf'], ds['cdf'])
-    ds = gof.lilliefors_Dcrit(ds, chunks, shape=-0.114)
+    ds = gof.lilliefors_Dcrit(ds, chunks, shape=ev_shape)
+    # Filliben
+    ds = gof.filliben_test(ds)
+    n_obs = int(ds['n_obs'].max())
+    filliben_crit = gof.filliben_crit(shape=ev_shape, n_obs=n_obs)
+    print(filliben_crit)
+    ds['filliben_crit'] = xr.DataArray(filliben_crit,
+                                       coords=[[0.05, 0.1]],
+                                       dims=['significance_level'])
     return ds
 
 
@@ -198,6 +206,7 @@ def main():
     BS_SAMPLE = 1000
     START = 1979
     END = 2018
+    EV_SHAPE = -0.114
 
     if SOURCE == 'era5':
         temp_res = 1  # temporal resolution in hours
@@ -253,14 +262,14 @@ def main():
         ## fit EV ##
         # print('## Fit EV: {} ##'.format(datetime.now()))
         # ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
-        # ds_gev = step3_fit_gev_with_ci(ds_ranked, BS_SAMPLE)
+        # ds_gev = step3_fit_gev_with_ci(ds_ranked, BS_SAMPLE, ev_shape=EV_SHAPE)
         # print(ds_gev)
         # to_zarr(ds_gev, path_gev)
 
         ## GoF ##
         print('## Goodness of fit: {} ##'.format(datetime.now()))
         ds_gev = xr.open_zarr(path_gev)
-        ds_gof = step4_goodness_of_fit(ds_gev, chunk_size)
+        ds_gof = step4_goodness_of_fit(ds_gev, chunk_size, ev_shape=EV_SHAPE)
         print(ds_gof)
         to_zarr(ds_gof, path_gof)
 
