@@ -6,6 +6,7 @@ import csv
 import math
 
 import numpy as np
+import numba as nb
 import xarray as xr
 import dask
 from dask.diagnostics import ProgressBar, Profiler, ResourceProfiler, CacheProfiler
@@ -19,11 +20,12 @@ import helper
 
 
 DATA_DIR_ERA = '/home/lunet/gylc4/geodata/ERA5/'
+DATA_DIR_ERA_PRECIP = '/home/lunet/gylc4/geodata/ERA5/yearly_zarr'
 DATA_DIR_MIDAS = '../data/MIDAS/'
 HOURLY_ERA5 = 'era5_1979-2018_precip.zarr'
 HOURLY_MIDAS = 'midas_1979-2018_precip_select.zarr'
 
-AMS_BASENAME = '{}_1979-2018_ams.zarr'
+AMS_BASENAME = '{}_{}-{}_ams.zarr'
 ANNUAL_BASENAME = '{}_{}-{}_ams_{}.zarr'
 
 
@@ -63,7 +65,53 @@ COORDS_ENCODING = {'ci': STR_ENCODING,
                   }
 
 
-def step1_annual_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res):
+def amax_of_yearly_files(yearly_dir, start, end, precip_var, time_dim, durations, temp_res, chunks):
+    """Read yearly records from a given directory.
+    For each year, get the AMS.
+    """
+    years = range(start, end+1)
+    precip_dict = {}
+    for filename in os.listdir(yearly_dir):
+        year_str = filename[:4]
+        if int(year_str) in years and 'ams' not in filename:
+            file_path = os.path.join(yearly_dir, filename)
+            precip = xr.open_zarr(file_path)[precip_var]
+            precip_dict[int(year_str)] = precip
+
+    amax_year_list = []
+    for year, da_precip in precip_dict.items():
+        amax_dur_list = []
+        for duration in durations:
+            window_size = int(duration / temp_res)
+            precip_roll = da_precip.rolling(**{time_dim:window_size}, min_periods=max(int(window_size*.9), 1))
+            precip_roll_mean = precip_roll.mean(dim=time_dim, skipna=True)
+            amax = precip_roll_mean.max(dim=time_dim, skipna=True)
+            amax = amax.expand_dims('duration').rename('annual_max')
+            amax.coords['duration'] = [duration]
+            amax_dur_list.append(amax)
+        amax_year = xr.concat(amax_dur_list, dim='duration').sortby('duration')
+        amax_year = amax_year.expand_dims('year').chunk(chunks)
+        amax_year.coords['year'] = [year]
+        ams_year_path = os.path.join(yearly_dir, '{}_ams.zarr'.format(year))
+        print(ams_year_path)
+        amax_year.to_dataset().to_zarr(ams_year_path, mode='w')
+
+
+def concat_amax(yearly_dir, start, end):
+    years = range(start, end+1)
+    amax_list = []
+    for filename in os.listdir(yearly_dir):
+        year_str = filename[:4]
+        if int(year_str) in years and filename.endswith('ams.zarr'):
+            file_path = os.path.join(yearly_dir, filename)
+            amax = xr.open_zarr(file_path)['annual_max']
+            amax_list.append(amax)
+
+    amax_ds = xr.concat(amax_list, dim='year').sortby('year').to_dataset()
+    return amax_ds
+
+
+def amax_from_file(ds, precip_var, time_dim, durations, temp_res):
     """for each rolling windows size:
     compute the annual maximum of a moving mean
     return an array with the durations as a new dimension
@@ -75,10 +123,10 @@ def step1_annual_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res
         precip_roll_mean = precip.rolling(**{time_dim:window_size}, min_periods=max(int(window_size*.9), 1)).mean(dim=time_dim, skipna=True)
         annual_max = precip_roll_mean.groupby('{}.year'.format(time_dim)).max(dim=time_dim, skipna=True).rename('annual_max')
         da_list.append(annual_max)
-    return xr.concat(da_list, 'duration').to_dataset().assign_coords(duration=durations)
+    return xr.concat(da_list, dim='duration').to_dataset().assign_coords(duration=durations)
 
 
-def step11_arg_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res):
+def arg_maxs_of_roll_mean(ds, precip_var, time_dim, durations, temp_res):
     """for each rolling windows size:
     compute the location of the annual maximum of a moving mean
     """
@@ -133,7 +181,7 @@ def step4_goodness_of_fit(ds, chunks):
     ds['cdf'] = ev_fit.gev_cdf(da_ams, loc, scale, shape).transpose(*da_ams.dims)
     # Lilliefors
     ds['KS_D'] = gof.KS_test(ds['ecdf'], ds['cdf'])
-    ds = gof.lilliefors_Dcrit(ds, chunks)
+    ds = gof.lilliefors_Dcrit(ds, chunks, shape=-0.114)
     return ds
 
 
@@ -168,7 +216,7 @@ def main():
     else:
         raise KeyError('Unknown source: {}'.format(SOURCE))
 
-    ams_path = os.path.join(data_dir, AMS_BASENAME.format(SOURCE))
+    ams_path = os.path.join(data_dir, AMS_BASENAME.format(SOURCE, START, END))
     path_ranked = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'ranked'))
     path_gev = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'gev'))
     path_gof = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'gof'))
@@ -180,6 +228,8 @@ def main():
 
         # Get annual maxima #
         # print('## AMS: {} ##'.format(datetime.now()))
+        # amax_of_yearly_files(DATA_DIR_ERA_PRECIP, START, END, precip_var, time_var, DURATIONS_ALL, temp_res, chunk_size)
+        # ams = concat_amax(DATA_DIR_ERA_PRECIP, START, END).chunk(chunk_size)
         # ams = step1_annual_maxs_of_roll_mean(hourly, precip_var, time_var, DURATIONS_ALL, temp_res).chunk(chunk_size)
         # print(ams)
         # to_zarr(ams, ams_path)
@@ -201,11 +251,11 @@ def main():
         client = Client(cluster)
 
         ## fit EV ##
-        print('## Fit EV: {} ##'.format(datetime.now()))
-        ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
-        ds_gev = step3_fit_gev_with_ci(ds_ranked, BS_SAMPLE)
-        print(ds_gev)
-        to_zarr(ds_gev, path_gev)
+        # print('## Fit EV: {} ##'.format(datetime.now()))
+        # ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
+        # ds_gev = step3_fit_gev_with_ci(ds_ranked, BS_SAMPLE)
+        # print(ds_gev)
+        # to_zarr(ds_gev, path_gev)
 
         ## GoF ##
         print('## Goodness of fit: {} ##'.format(datetime.now()))

@@ -179,7 +179,6 @@ def gen_bvalue(ecdf, ams, n_obs, order, axis):
     return bvalue
 
 
-@nb.njit()
 def gev_pwm(ams, ecdf, n_obs, ax_year, shape=None):
     """Fit the GEV using the Method of Probability-Weighted Moments.
     EV type II when shape<0.
@@ -196,7 +195,7 @@ def gev_pwm(ams, ecdf, n_obs, ax_year, shape=None):
     l1 = b0
     l2 = iscalar(2) * b1 - b0
     if shape is not None:
-        arr_shape = np.full_like(b0, shape)
+        arr_shape = np.atleast_1d(np.full_like(b0, shape))
     else:
         b2 = gen_bvalue(ecdf, ams, n_obs, iscalar(2), ax_year)
         arr_shape = gev_shape(b0, b1, b2)
@@ -230,7 +229,8 @@ def gev_from_samples(arr_ams, n_sample, shape_param):
     rank = bottleneck.nanrankdata(arr_samples, axis=ax_year).astype(fscalar)
     # fit distribution. ev_apams is a tuple of ndarrays.
     ecdf = ecdf_jit(rank, n_obs)
-    ev_params = gev_pwm(arr_samples, ecdf, n_obs, ax_year, shape=shape_param)
+    gev_pwm_njit = nb.njit(gev_pwm)
+    ev_params = gev_pwm_njit(arr_samples, ecdf, n_obs, ax_year, shape=shape_param)
     # Add one axis. Changes shape to (ev_params, samples).
     return np.array(ev_params)
 
@@ -350,7 +350,6 @@ def gev_cdf_nonzero(x, loc, scale, shape):
     return fscalar(np.e) ** (-(1-shape*z)**(1/shape))
 
 
-# @nb.njit()
 def gev_cdf(x, loc, scale, shape):
     return xr.where(shape == 0,
                     gumbel_cdf(x, loc, scale),
