@@ -492,13 +492,13 @@ def fig_map_filliben(ds):
     """
     alpha = 0.05
     DURATION = 2
-    Dcrit = ds['filliben_crit'].sel(significance_level=alpha).values
-    Dmean = ds['filliben_stat'].mean(dim='duration')
-    single_map(Dmean,
+    r_crit = ds['filliben_crit'].sel(significance_level=alpha).values
+    r_mean = ds['filliben_stat'].mean(dim='duration')
+    single_map(r_mean,
         # title='Lilliefors test statistic (1979-2018, mean on $d$, $\\alpha=${})'.format(alpha),
         title='',
-        cbar_label="Filliben's $r (\\alpha={})$".format(alpha),
-        center=Dcrit,
+        cbar_label="Filliben's $r$ ($r_{{\mathrm{{crit}}}} = {:.2f}$)".format(r_crit),
+        center=r_crit,
         reverse=False,
         fig_name='filliben_1979-2018_{}_dmean.png'.format(int(alpha*100)))
 
@@ -709,11 +709,24 @@ def table_rsquared_quantiles(ds, dim):
     print(q)
 
 
-def table_ks_count(ds, dim):
-    ks_mean = ds['KS_D'].mean(dim='duration')
-    print(ds['Dcrit'].load())
-    q =  ks_mean.load().quantile([0.95, 0.99], dim=dim)
-    print(q)
+def table_gof_quantiles(ds, dim):
+    q_levels = [0.001, 0.01, 0.05, 0.1, 0.9, 0.95,0.99,0.999]
+
+    q_D =  ds['KS_D'].load().quantile(q_levels)
+    print("Dcrit: {}".format(ds['Dcrit'].load()))
+    print(q_D)
+    q_r = ds['filliben_stat'].load().quantile(q_levels)
+    print("r_crit: {}".format(ds['filliben_crit'].load()))
+    print(q_r)
+
+
+def table_gof_count(ds):
+    """count the number of cells x durations without good fit.
+    """
+    n_all = ds['filliben_stat'].count().load()
+    nofit = (ds['filliben_stat'] < ds['filliben_crit'].sel(significance_level=0.05))
+    n_nofit = xr.where(nofit, 1., np.nan).count().load()
+    print(n_nofit/n_all)
 
 
 def table_sizing_values(ds, coords, d):
@@ -1087,22 +1100,22 @@ def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
     # Drop Gibraltar
     ds_midas = xr.open_zarr(MIDAS_AMS_FILE).drop([1585], dim='station')
-    # print(ds_era)
+    print(ds_era)
     # era_precip = xr.open_zarr(os.path.join(DATA_DIR, ERA_PRECIP_FILE))
     # midas_precip = xr.open_zarr(MIDAS_PRECIP_FILE)
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='1980-01', end='1980-12', fig_name='hyetographs_23_1980.pdf')
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='1979', end='2018', fig_name='hyetographs_23_1979-2018.pdf')
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='2017', end='2018', fig_name='hyetographs_23_2017-2018.pdf')
 
-    fig_map_KS(ds_era)
-    fig_map_filliben(ds_era)
+    # fig_map_KS(ds_era)
+    # fig_map_filliben(ds_era)
 
     # fig_maps_gev24h(ds_era)
     # fig_maps_gev_scaled24h(ds_era)
     # table_count_noGEVfit(ds_era)
     # table_count_noscalingfit(ds_era)
-    # table_rsquared_quantiles(ds_era, dim=['longitude', 'latitude'])
-    # table_ks_count(ds_era, ['longitude', 'latitude'])
+    table_rsquared_quantiles(ds_era, dim=['longitude', 'latitude'])
+    # table_gof_count(ds_era)
 
     # fig_maps_rsquared(ds_era)
     # fig_maps_spearman(ds_era)
