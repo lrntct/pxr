@@ -20,7 +20,7 @@ import scipy.stats
 
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
+from matplotlib.ticker import FuncFormatter, ScalarFormatter
 
 import ev_quantiles
 import helper
@@ -481,7 +481,7 @@ def fig_map_KS(ds):
     single_map(Dmean,
         # title='Lilliefors test statistic (1979-2018, mean on $d$, $\\alpha=${})'.format(alpha),
         title='',
-        cbar_label='$D (\\alpha={})$'.format(alpha),
+        cbar_label="Kolmogorov-Smirnov $D$ ($D_{{\mathrm{{crit}}}} = {:.2f}$)".format(Dcrit),
         center=Dcrit,
         reverse=True,
         fig_name='D_1979-2018_{}_dmean.png'.format(int(alpha*100)))
@@ -636,8 +636,8 @@ def plot_scaling_differences(param, df_list, ax, ylim=False):
     set_logd_xticks(ax)
     ax.set_xlabel('$d$ (hours)')
     ylabel = '$\log_{{10}}( {i}d^{g} / {p} )$'.format(g=gradient_symbols[param],
-                                                        p=param_symbols[param],
-                                                        i=intercept_symbols[param])
+                                                      p=param_symbols[param],
+                                                      i=intercept_symbols[param])
     ax.set_ylabel(ylabel)
 
 
@@ -1095,6 +1095,53 @@ def plot_hyetographs(ds_era, ds_midas, station_num, start, end, fig_name):
     plt.close()
 
 
+def plot_IDF(ds, coords, return_periods, fig_name):
+    """Plot IDF curves and their uncertainties at given return periods
+    """
+    # Select the cells above the station
+    ds_sel = ds.sel(latitude=coords[0],
+                    longitude=postprocessing.convert_lon(coords[1]),
+                    method='nearest').drop(['longitude', 'latitude'])
+    # calculate intensity for given return periods
+    da_list = []
+    for T in return_periods:
+        intensity = postprocessing.estimate_intensity(ds_sel['gev'], ds['n_obs'], T)
+        intensity = intensity.expand_dims('T')
+        intensity.coords['T'] = [T]
+        da_list.append(intensity)
+    da_i = xr.concat(da_list, dim='T')
+    # Save the CI as variables
+    ds_i = da_i.to_dataset(dim='ci')
+    df = ds_i.to_dataframe().reset_index()
+
+    # Plot
+    sns.set(style="ticks", context='paper')
+    sns.set_palette(sns.color_palette("viridis", len(return_periods)))
+    fig_size = (4, 3)
+    fig = plt.figure(figsize=fig_size)
+    ax = fig.add_subplot(111)
+    for rt in return_periods:
+        df_T = df.loc[df['T'] == rt].dropna()
+        # plot estimate
+        df_T.plot(x='duration', y='estimate', ax=ax, linewidth=0.1,
+                       label="{} years".format(rt),
+                       )
+        # plot CI
+        ax.fill_between(df_T['duration'], df_T['0.025'], df_T['0.975'],
+                alpha=0.25, zorder=0)
+
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.yaxis.set_major_formatter(ScalarFormatter())
+    ax.set_xlabel('Duration (hours)')
+    ax.set_ylabel('Intensity (mm/h)')
+    set_logd_xticks(ax)
+    lines, labels = ax.get_legend_handles_labels()
+    # print(lines)
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.close()
+
 
 def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
@@ -1114,7 +1161,7 @@ def main():
     # fig_maps_gev_scaled24h(ds_era)
     # table_count_noGEVfit(ds_era)
     # table_count_noscalingfit(ds_era)
-    table_rsquared_quantiles(ds_era, dim=['longitude', 'latitude'])
+    # table_rsquared_quantiles(ds_era, dim=['longitude', 'latitude'])
     # table_gof_count(ds_era)
 
     # fig_maps_rsquared(ds_era)
@@ -1146,6 +1193,8 @@ def main():
     # plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
 
     # plot_scaling_intensity_error(ds_era, dim=['longitude', 'latitude'], fig_name='MPE_intensities_scaled.pdf')
+
+    plot_IDF(ds_era, STUDY_SITES['Jakarta'], [2, 10, 100], 'IDF_Jakarta.pdf')
 
     # single_map(ds_era['scaling_pearsonr'],
     #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",

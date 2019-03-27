@@ -20,8 +20,8 @@ DATA_DIR = '/home/lunet/gylc4/geodata/ERA5'
 LONG_NAME = "Total precipitation"
 VAR_NAME = 'precipitation'
 
-YEAR_START = 1979
-YEAR_END = 1988
+YEAR_START = 1989
+YEAR_END = 2018
 
 FILE_CONCAT_PREFIX = 'era5_{}-{}_precip'.format(YEAR_START, YEAR_END)
 
