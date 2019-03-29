@@ -342,8 +342,8 @@ def get_quantile_dict(quantiles, **kwargs):
         for source, (ds, dim) in kwargs.items():
             da_gev = ds['gev'].sel(ci='estimate', ev_param=param)
             da_scaled = ds['gev_scaled'].sel(ci='estimate', ev_param=param)
-            diff = np.log10(da_scaled / da_gev)
-            # diff = da_scaled - da_gev
+            # diff = np.log10(da_scaled / da_gev)
+            diff = (da_scaled - da_gev) / da_gev
             diff_q = diff.compute().quantile(quantiles, dim=dim)
             df_q = diff_q.to_dataset('quantile').to_dataframe()
             df_list.append((source, df_q))

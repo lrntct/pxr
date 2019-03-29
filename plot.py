@@ -639,10 +639,14 @@ def plot_scaling_differences(param, df_list, ax, ylim=False):
     # ax.set_yticks([ 0.0, 0.5])
     set_logd_xticks(ax)
     ax.set_xlabel('$d$ (hours)')
-    ylabel = '$\log_{{10}}( {i}d^{g} / {p} )$'.format(g=gradient_symbols[param],
-                                                      p=param_symbols[param],
-                                                      i=intercept_symbols[param])
+    # ylabel = '$\log_{{10}}( {i}d^{g} / {p} )$'.format(g=gradient_symbols[param],
+    #                                                   p=param_symbols[param],
+    #                                                   i=intercept_symbols[param])
+    ylabel = "${i}d^{g} - {p}$".format(g=gradient_symbols[param],
+                                       p=param_symbols[param],
+                                       i=intercept_symbols[param])
     ax.set_ylabel(ylabel)
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y)))
 
 
 
@@ -1174,18 +1178,18 @@ def main():
 
     # fig_maps_rsquared(ds_era)
 
-    # fig_scaling_differences_all(ds_era, ds_midas, 'scaling_diff_all_1979-2018.pdf')
+    fig_scaling_differences_all(ds_era, ds_midas, 'scaling_diff_all_1979-2018.pdf')
     # fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)
 
     # fig_gauges_map('midas_gauges_map.pdf')
 
     # ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
-    # # print(ds_combined['gev_scaled'].sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
+    # print(ds_combined['gev_scaled'].sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
     # plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
 
-    ds_i = postprocessing.estimate_intensities_errors(ds_era, ds_midas)
-    plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
+    # ds_i = postprocessing.estimate_intensities_errors(ds_era, ds_midas)
+    # plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
     # plot_scaling_intensity_error(ds_era, dim=['longitude', 'latitude'], fig_name='MPE_intensities_scaled.pdf')
 
     # plot_IDF(ds_era, STUDY_SITES['Jakarta'], [2, 10, 100], 'IDF_Jakarta.pdf')
