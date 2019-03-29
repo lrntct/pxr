@@ -16,9 +16,8 @@ import shapely.geometry
 import seaborn as sns
 import cartopy as ctpy
 import scipy.stats
+from uncertainties import ufloat, unumpy
 
-from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
-import matplotlib.pyplot as plt
 
 import ev_quantiles
 import helper
@@ -265,11 +264,11 @@ def estimate_intensities_errors(ds_era, ds_gauges):
         intensity = intensity.expand_dims('T')
         intensity.coords['T'] = [T]
         da_list.append(intensity)
-    da_i = xr.concat(da_list, dim='T').sel(ci='estimate').drop('ci')
+    da_i = xr.concat(da_list, dim='T')#.sel(ci='estimate').drop('ci')
     ds_i = da_i.to_dataset()
     # print(ds_i)
 
-    # Robust regression and MAE
+    # Robust regression and error
     new_sources = []
     for reg_source in ['ERA5', 'ERA5_scaled']:
         i_midas = da_i.sel(source='MIDAS')
@@ -290,18 +289,28 @@ def estimate_intensities_errors(ds_era, ds_gauges):
         mape = np.abs((i_source - i_midas) / i_midas).mean(dim='station')
         mape = mape.expand_dims('source').rename('mape')
         mape.coords['source'] = [reg_source]
-        # MPE + ci
-        pe = (i_source - i_midas) / i_midas
-        mpe = pe.mean(dim='station').rename('mpe')
+        # MPE + ci --- Change type to propagate uncertainty, 95% CI
+        ui_source = unumpy.uarray(i_source.sel(ci='estimate'),
+                                  i_source.sel(ci='0.975')-i_source.sel(ci='estimate'))
+        ui_midas = unumpy.uarray(i_midas.sel(ci='estimate'),
+                                  i_midas.sel(ci='0.975')-i_midas.sel(ci='estimate'))
+        pe = (ui_source - ui_midas) / ui_midas
+        station_ax_num = i_source.sel(ci='estimate').get_axis_num('station')
+        mpe = pe.mean(axis=station_ax_num)
+        # print(mpe)
+        mpe_nom = unumpy.nominal_values(mpe)
+        mpe_ci = unumpy.std_devs(mpe)
+        # print(mpe_nom)
+        # print(mpe_ci)
+        da_orig_sel = i_source.sel(ci='estimate').isel(station=0)
+        mpe = xr.DataArray(mpe_nom, coords=da_orig_sel.coords,
+                           dims=da_orig_sel.dims,
+                           name='mpe')
         mpe = mpe.expand_dims('source')
         mpe.coords['source'] = [reg_source]
-        # CI of mean
-        pe_std = pe.std(dim='station')
-        n = len(pe['station'])
-        t_quantile = scipy.stats.t.ppf(0.975, n-1)  # 95% CI
-        pe_ci = t_quantile * (pe_std/np.sqrt(n))
-        pe_ci_l = mpe - pe_ci
-        pe_ci_h = mpe + pe_ci
+        # print(mpe)
+        pe_ci_l = mpe - mpe_ci
+        pe_ci_h = mpe + mpe_ci
         pe_ci_l.coords['source'] = [reg_source + '_ci_l']
         pe_ci_h.coords['source'] = [reg_source + '_ci_h']
         mpe = xr.concat([mpe, pe_ci_h, pe_ci_l], dim='source')
