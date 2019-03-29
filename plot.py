@@ -1,4 +1,5 @@
 # -*- coding: utf8 -*-
+# Headless plotting
 import matplotlib
 matplotlib.use("Agg")
 
@@ -26,6 +27,8 @@ import ev_quantiles
 import helper
 import postprocessing
 
+# Increase DPI of figures
+matplotlib.rcParams['savefig.dpi'] = 200
 
 DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
 ERA_AMS_FILE = 'era5_1979-2018_ams_gof.zarr'
@@ -93,7 +96,8 @@ def single_map(da, cbar_label, title, fig_name, center=None, reverse=False):
     plt.close()
 
 
-def multi_maps(da_list, disp_names, value_name, fig_name, sqr=False, center=None, reverse=False):
+def multi_maps(da_list, disp_names, value_name, fig_name,
+               sqr=False, center=None, reverse=False, robust=True):
     crs = ctpy.crs.EqualEarth()
     # reshape variables as dimension
     da_list2 = []
@@ -117,14 +121,14 @@ def multi_maps(da_list, disp_names, value_name, fig_name, sqr=False, center=None
         p = da.plot(col='param', col_wrap=1,
                     transform=ctpy.crs.PlateCarree(), aspect=aspect,
                     cmap=cmap, center=center,
-                    robust=True, extend='both',
+                    robust=robust, extend='both',
                     subplot_kws=dict(projection=crs)
                     )
     else:
         p = da.plot(col='param', col_wrap=1,
                     transform=ctpy.crs.PlateCarree(), aspect=aspect,
                     cmap='viridis',
-                    robust=True, extend='both',
+                    robust=robust, extend='both',
                     subplot_kws=dict(projection=crs)
                     )
     for ax, disp_name in zip(p.axes.flat, disp_names):
@@ -540,7 +544,7 @@ def fig_maps_spearman(ds):
     da_scale_rho = da_scaling.sel(ev_param='scale').rename('scale')
     multi_maps([da_loc_rho, da_scale_rho],
                ['Location', 'Scale'],
-               '$\\rho$', 'gev_rho.png', sqr=False)
+               '$\\rho$', 'gev_rho.png', sqr=False, robust=False)
 
 
 def fig_scaling_differences_all(ds_era, ds_midas, fig_name):
@@ -655,9 +659,11 @@ def fig_scaling_ratio_map(ds):
 
 
 def fig_scaling_gradients_maps(ds):
-    multi_maps(ds.sel(scaling_extent=b'daily'), ['location_line_slope', 'scale_line_slope'],
-               ['Location-duration scaling', 'Scale-duration scaling'],
-               "$\\alpha, \\beta$", 'scaling_gradients_2000-2017_superdaily.png', sqr=False)
+    alpha = ds['gev_scaling'].sel(scaling_param='slope', ci='estimate', ev_param='location').rename('alpha')
+    beta = ds['gev_scaling'].sel(scaling_param='slope', ci='estimate', ev_param='scale').rename('beta')
+    multi_maps([alpha, beta],
+               ['$\\alpha$', '$\\beta$'],
+               'Parameter value', 'scaling_gradients_1979-2018.png')
 
 
 def fig_scaling_gradients_ratio_maps(ds):
@@ -1147,54 +1153,64 @@ def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
     # Drop Gibraltar
     ds_midas = xr.open_zarr(MIDAS_AMS_FILE).drop([1585], dim='station')
-    print(ds_era)
+    # print(ds_era)
+
     # era_precip = xr.open_zarr(os.path.join(DATA_DIR, ERA_PRECIP_FILE))
     # midas_precip = xr.open_zarr(MIDAS_PRECIP_FILE)
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='1980-01', end='1980-12', fig_name='hyetographs_23_1980.pdf')
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='1979', end='2018', fig_name='hyetographs_23_1979-2018.pdf')
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='2017', end='2018', fig_name='hyetographs_23_2017-2018.pdf')
 
+
+    ##########
+    # In Manuscript
+    ##########
+
     # fig_map_KS(ds_era)
     # fig_map_filliben(ds_era)
 
     # fig_maps_gev24h(ds_era)
+    # fig_scaling_gradients_maps(ds_era)
+
+    # fig_maps_rsquared(ds_era)
+
+    # fig_scaling_differences_all(ds_era, ds_midas, 'scaling_diff_all_1979-2018.pdf')
+    # fig_scaling_ratio_map(ds_era)
+    # fig_scaling_hexbin(ds_era)
+
+    # fig_gauges_map('midas_gauges_map.pdf')
+
+    # ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
+    # # print(ds_combined['gev_scaled'].sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
+    # plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
+
+    ds_i = postprocessing.estimate_intensities_errors(ds_era, ds_midas)
+    plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
+    # plot_scaling_intensity_error(ds_era, dim=['longitude', 'latitude'], fig_name='MPE_intensities_scaled.pdf')
+
+    # plot_IDF(ds_era, STUDY_SITES['Jakarta'], [2, 10, 100], 'IDF_Jakarta.pdf')
+ 
+    ##############
+
     # fig_maps_gev_scaled24h(ds_era)
     # table_count_noGEVfit(ds_era)
     # table_count_noscalingfit(ds_era)
     # table_rsquared_quantiles(ds_era, dim=['longitude', 'latitude'])
     # table_gof_count(ds_era)
 
-    # fig_maps_rsquared(ds_era)
     # fig_maps_spearman(ds_era)
-
-    # fig_scaling_differences_all(ds_era, ds_midas, 'scaling_diff_all_1979-2018.pdf')
-    # fig_scaling_ratio_map(ds_era)
-    # fig_scaling_hexbin(ds_era)
 
     # ds_pairs = prepare_midas_mean(ds_era, ds_midas, ds_midas_pairs)
     # fig_midas_mean(ds_pairs, 'midas_mean.pdf')
 
-    # fig_gauges_map('midas_gauges_map.pdf')
-
-    # ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
-    # print(ds_combined['gev_scaled'].sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
-    # plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
-
     # table_sizing_values(ds_era, STUDY_SITES['Jakarta'], d=2)
 
-    ##############
-    # ds_i = postprocessing.estimate_intensities_errors(ds_era, ds_midas)
-    # print(ds_i)
     # scatter_intensity(ds_i['intensity'], 'scatter_intensity.pdf')
     # plot_ARF(ds_i['arf'], 'arf_scaling.pdf')
     # plot_intensities_AE(ds_i['mae'], 'MAE (mm/h)', 'MAE_intensities.pdf')
     # plot_intensities_errors_percent(ds_i['mape'], 'MAPE', 'MAPE_intensities.pdf')
     # postprocessing.adequacy(ds_i['mape'], threshold=.2)
-    # plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
 
-    # plot_scaling_intensity_error(ds_era, dim=['longitude', 'latitude'], fig_name='MPE_intensities_scaled.pdf')
-
-    plot_IDF(ds_era, STUDY_SITES['Jakarta'], [2, 10, 100], 'IDF_Jakarta.pdf')
 
     # single_map(ds_era['scaling_pearsonr'],
     #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
