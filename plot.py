@@ -982,12 +982,12 @@ def intensities_errors(da):
     print(df.head())
     # Plot on facetgrid
     fg = sns.FacetGrid(df, sharex=True, sharey=True, col='T', col_wrap=col_wrap, aspect=aspect, height=height)
-    fg = fg.map(plt.plot, 'duration', 'ERA5_scaled', color=C_PRIMARY_2, label='ERA5 scaled').set(xscale = 'log')
+    fg = fg.map(plt.plot, 'duration', 'ERA5_scaled', color=C_PRIMARY_2, label='PXR-4').set(xscale = 'log')
     fg = fg.map(plt.fill_between, 'duration', 'ERA5_scaled_ci_l', 'ERA5_scaled_ci_h',
-                color=C_PRIMARY_2, alpha=0.2, linewidth=0).set(xscale = 'log')
-    fg = fg.map(plt.plot, 'duration', 'ERA5', color=C_PRIMARY_1, label='ERA5').set(xscale = 'log')
+                color=C_PRIMARY_2, alpha=0.2, linewidth=0, label='95% of PXR-4').set(xscale = 'log')
+    fg = fg.map(plt.plot, 'duration', 'ERA5', color=C_PRIMARY_1, label='PXR-2').set(xscale = 'log')
     fg = fg.map(plt.fill_between, 'duration', 'ERA5_ci_l', 'ERA5_ci_h',
-                color=C_PRIMARY_1, alpha=0.2, linewidth=0, label='95% CI').set(xscale = 'log')
+                color=C_PRIMARY_1, alpha=0.2, linewidth=0, label='95% of PXR-2').set(xscale = 'log')
     return fg
 
 
@@ -1178,7 +1178,7 @@ def main():
 
     # fig_maps_rsquared(ds_era)
 
-    fig_scaling_differences_all(ds_era, ds_midas, 'scaling_diff_all_1979-2018.pdf')
+    # fig_scaling_differences_all(ds_era, ds_midas, 'scaling_diff_all_1979-2018.pdf')
     # fig_scaling_ratio_map(ds_era)
     # fig_scaling_hexbin(ds_era)
 
@@ -1188,8 +1188,8 @@ def main():
     # print(ds_combined['gev_scaled'].sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
     # plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
 
-    # ds_i = postprocessing.estimate_intensities_errors(ds_era, ds_midas)
-    # plot_intensities_errors_percent(ds_i['mpe'], 'MPE', 'MPE_intensities.pdf')
+    ds_i = postprocessing.estimate_intensities_errors(ds_era, ds_midas)
+    plot_intensities_errors_percent(ds_i['mdpe'], 'MdPE', 'MdPE_intensities.pdf')
     # plot_scaling_intensity_error(ds_era, dim=['longitude', 'latitude'], fig_name='MPE_intensities_scaled.pdf')
 
     # plot_IDF(ds_era, STUDY_SITES['Jakarta'], [2, 10, 100], 'IDF_Jakarta.pdf')
