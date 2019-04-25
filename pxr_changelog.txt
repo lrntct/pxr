@@ -1,0 +1,25 @@
+Parametrized eXtreme Rain (PXR)
+Changelog
+
+2.0.1
+25 April 2019
+- In PXR-2, the dimensions of 'filliben_stat' and 'D' are now in the same order as 'location'and 'scale'.
+
+2.0.0
+29 March 2019
+- Use ERA5 data on the period 1979-2018.
+- Based on the GEV distribution with a fixed shape parameter.
+- Distribution parameters are estimated using the Probability-Weigthed moments.
+- Goodness of fit assessed with both the Filliben and the Lilliefors tests.
+- Uncertainty of the parameters estimated with the bootstrap method with 1000 samples
+- Only the scaling parameters obtained from all the durations are considered (PXR-4 only). 
+
+1.0.0
+21 October 2018
+- First release.
+- Use ERA5 data on the period 2000-2017.
+- Based on the Gumbel distribution.
+- Distribution parameters estimated with the maximum likelihood.
+- Goodness of fit assessed with the Anderson-Darling test.
+- Give the scaling parameters obtained from all the durations vs daily and above (PXR-4 only).
+- No uncertainty estimate

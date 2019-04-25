@@ -51,6 +51,9 @@ def gen_pxr2(ds_source):
     # Select the relevant variables
     var_keep = ['filliben_stat', 'filliben_crit', 'KS_D', 'Dcrit']
     ds_pxr2 = xr.merge([params, ds_source[var_keep]]).rename({'KS_D': 'D'})
+    # Sort dimension orders of GoF variables
+    ds_pxr2['filliben_stat'] = ds_pxr2['filliben_stat'].transpose(*ds_pxr2['location'].dims)
+    ds_pxr2['D'] = ds_pxr2['D'].transpose(*ds_pxr2['location'].dims)
     # Metadata
     apply_common_metadata(ds_pxr2)
     ds_pxr2.attrs.update(metadata['pxr2'])

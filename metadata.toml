@@ -1,5 +1,5 @@
 [common]
-version = '2.0.0'
+version = '2.0.1'
 institution = "Department of Geography and Environment, Loughborough University"
 authors = "Laurent G. Courty, Rob L. Wilby, John K. Hillier, Louise J. Slater"
 source = "Generated using Copernicus Climate Change Service information [2019]"
@@ -10,10 +10,10 @@ comment = "Global IDF characteristics using ERA5-HRES total precipitation 1979-2
 Conventions = "CF 1.7"
 
 [pxr2]
-title = "Parametrized eXtreme Rainfall-2 (PXR-2)"
+title = "Parametrized eXtreme Rain-2 (PXR-2)"
 
 [pxr4]
-title = "Parametrized eXtreme Rainfall-4 (PXR-4)"
+title = "Parametrized eXtreme Rain-4 (PXR-4)"
 
 [coords]
 latitude.standard_name = "latitude"
