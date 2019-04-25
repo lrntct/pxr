@@ -238,7 +238,7 @@ def gev_from_samples(arr_ams, n_sample, shape_param):
     ax_year = 1
     # rank samples
     rank = bottleneck.nanrankdata(arr_samples, axis=ax_year).astype(fscalar)
-    # fit distribution. ev_apams is a tuple of ndarrays.
+    # fit distribution. ev_params is a tuple of ndarrays.
     ecdf = ecdf_jit(rank, n_obs)
     gev_pwm_njit = nb.njit(gev_pwm)
     ev_params = gev_pwm_njit(arr_samples, ecdf, n_obs, ax_year, shape=shape_param)
