@@ -47,12 +47,14 @@ EXTRACT = dict(latitude=slice(45, -45),
 # Coordinates of study sites
 # STUDY_SITES = {'Kampala': (0.317, 32.616),
 #                'Kisumu': (0.1, 34.75)}
-STUDY_SITES = {'Jakarta': (-6.2, 106.816), 'Sydney': (-33.865, 151.209),
-               'Beijing': (39.92, 116.38), 'New Delhi': (28.614, 77.21),
-               'Niamey': (13.512, 2.125), #'Jeddah': (21.54, 39.173), 'Cape Town': (-33.925278, 18.4238),
-               'Nairobi': (-1.28, 36.82), #'Brussels': (50.85, 4.35),
+STUDY_SITES = {
+            #    'Jakarta': (-6.2, 106.816), 'Sydney': (-33.865, 151.209),
+            #    'Beijing': (39.92, 116.38), 'New Delhi': (28.614, 77.21),
+            #    'Niamey': (13.512, 2.125), #'Jeddah': (21.54, 39.173), 'Cape Town': (-33.925278, 18.4238),
+            #    'Nairobi': (-1.28, 36.82), #'Brussels': (50.85, 4.35),
                'Santiago': (-33.45, -70.67), #'New York City': (40.72, -74.0),
-               'Mexico City': (19.43, -99.13),# 'Vancouver': (49.25, -123.1),
+            #    'Mexico City': (19.43, -99.13), 'Vancouver': (49.25, -123.1),
+               'Vienna': (48.2, 16.367),
                'Natal': (-5.78, -35.2)
                }
 
@@ -201,7 +203,7 @@ def plot_scaling_per_site(ds, fig_name):
     # sys.exit()  ###
     col_num = 2
     row_num = math.ceil(len(dict_df) / col_num)
-    fig_size = (6, 9)
+    fig_size = (9, 5)
     fig = plt.figure(figsize=fig_size)
     ax_num = 1
 
@@ -266,10 +268,10 @@ def plot_scaling_per_site(ds, fig_name):
         set_logd_xticks(ax)
         ax.use_sticky_edges = False
         ax.autoscale()
-    lgd_ncol = math.ceil(len(labels) / 2)
+    lgd_ncol = math.ceil(len(labels) / 4)
     lgd = fig.legend(lines, labels, loc='lower center', ncol=lgd_ncol)
     plt.tight_layout()
-    plt.subplots_adjust(bottom=.12, wspace=None, hspace=None)
+    plt.subplots_adjust(bottom=.2, wspace=None, hspace=None)
     plt.savefig(os.path.join(PLOT_DIR, fig_name))
     plt.close()
 
@@ -1105,13 +1107,16 @@ def plot_hyetographs(ds_era, ds_midas, station_num, start, end, fig_name):
     plt.close()
 
 
-def plot_IDF(ds, coords, return_periods, fig_name):
+def plot_IDF(ds, coords, return_periods, fig_name, title=''):
     """Plot IDF curves and their uncertainties at given return periods
     """
+    dur_min = 1
+    dur_max = 48
     # Select the cells above the station
     ds_sel = ds.sel(latitude=coords[0],
                     longitude=postprocessing.convert_lon(coords[1]),
-                    method='nearest').drop(['longitude', 'latitude'])
+                    method='nearest'
+                    ).drop(['longitude', 'latitude']).sel(duration=slice(dur_min, dur_max))
     # calculate intensity for given return periods
     da_list = []
     for T in return_periods:
@@ -1145,7 +1150,8 @@ def plot_IDF(ds, coords, return_periods, fig_name):
     ax.yaxis.set_major_formatter(ScalarFormatter())
     ax.set_xlabel('Duration (hours)')
     ax.set_ylabel('Intensity (mm/h)')
-    set_logd_xticks(ax)
+    ax.set_title(title)
+    set_logd_xticks(ax, dur_min, dur_max)
     lines, labels = ax.get_legend_handles_labels()
     # print(lines)
     plt.tight_layout()
@@ -1185,14 +1191,14 @@ def main():
     # fig_gauges_map('midas_gauges_map.pdf')
 
     # ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
+    # plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018_vienna.pdf')
     # print(ds_combined['gev_scaled'].sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
-    # plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
 
-    ds_i = postprocessing.estimate_intensities_errors(ds_era, ds_midas)
-    plot_intensities_errors_percent(ds_i['mdpe'], 'MdPE', 'MdPE_intensities.pdf')
+    # ds_i = postprocessing.estimate_intensities_errors(ds_era, ds_midas)
+    # plot_intensities_errors_percent(ds_i['mdpe'], 'MdPE', 'MdPE_intensities.pdf')
     # plot_scaling_intensity_error(ds_era, dim=['longitude', 'latitude'], fig_name='MPE_intensities_scaled.pdf')
 
-    # plot_IDF(ds_era, STUDY_SITES['Jakarta'], [2, 10, 100], 'IDF_Jakarta.pdf')
+    plot_IDF(ds_era, STUDY_SITES['Vienna'], [2, 10, 100], 'IDF_Vienna.png', title='IDF for Vienna from PXR-2')
  
     ##############
 
@@ -1216,10 +1222,12 @@ def main():
     # postprocessing.adequacy(ds_i['mape'], threshold=.2)
 
 
-    # single_map(ds_era['scaling_pearsonr'],
-    #            title="$d^{\eta(\mu)}$ - $d^{\eta(\sigma)}$ correlation",
-    #            cbar_label='Pearson correlation coefficient',
-    #            fig_name='pearsonr.png')
+    # era2018_precip = xr.open_zarr('/home/lunet/gylc4/geodata/ERA5/yearly_zarr/2018.zarr')
+    # precip_2018_max = era2018_precip['precipitation'].max(dim='time')
+    # single_map(precip_2018_max,
+    #            title="",
+    #            cbar_label='intensity (mm/h)',
+    #            fig_name='2018_max.png')
 
 
 
