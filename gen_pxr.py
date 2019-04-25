@@ -4,10 +4,11 @@ import os
 import datetime
 
 import xarray as xr
+import numpy as np
 import toml
 
+SOURCE_PATH = '/home/lunet/gylc4/geodata/ERA5/era5_1979-2018_ams_gof.zarr'
 DATA_DIR = '../data'
-SOURCE = 'era5_2000-2017_precip_complete.zarr'
 METDATA = 'metadata.toml'
 
 with open(METDATA, 'r') as toml_file:
@@ -33,9 +34,23 @@ def apply_common_metadata(ds):
             pass
 
 
+def extract_ci(ds, var):
+    """Separate the ci estimate from the CI intervals.
+    return a ds
+    """
+    params = ds[var].to_dataset(dim='ev_param')[['location', 'scale']]
+    params_est = params.sel(ci='estimate', drop=True)
+    params_ci = params.drop('estimate', dim='ci').rename({'location': 'location_ci',
+                                                          'scale': 'scale_ci'})
+    params_ci.coords['ci'] = params_ci.coords['ci'].astype(np.float32)
+    return xr.merge([params_est, params_ci])
+
+
 def gen_pxr2(ds_source):
+    params = extract_ci(ds_source, 'gev')
     # Select the relevant variables
-    ds_pxr2 = ds_source.sel(scaling_extent='all', drop=True)[['location', 'scale', 'A2', 'A2_crit']]
+    var_keep = ['filliben_stat', 'filliben_crit', 'KS_D', 'Dcrit']
+    ds_pxr2 = xr.merge([params, ds_source[var_keep]]).rename({'KS_D': 'D'})
     # Metadata
     apply_common_metadata(ds_pxr2)
     ds_pxr2.attrs.update(metadata['pxr2'])
@@ -44,23 +59,16 @@ def gen_pxr2(ds_source):
 
 def gen_pxr4(ds_source):
     # Select the relevant variables
-    ds_pxr4 = ds_source[['location_line_intercept', 'location_line_slope', 'location_line_rvalue',
-                         'scale_line_intercept', 'scale_line_slope', 'scale_line_rvalue']]
-    ds_pxr4['a'] = 10**ds_pxr4['location_line_intercept']
-    ds_pxr4['b'] = 10**ds_pxr4['scale_line_intercept']
-    ds_pxr4['location_r2'] = ds_pxr4['location_line_rvalue'] * ds_pxr4['location_line_rvalue']
-    ds_pxr4['scale_r2'] = ds_pxr4['scale_line_rvalue'] * ds_pxr4['scale_line_rvalue']
-    for d in ['location_line_intercept', 'scale_line_intercept',
-              'location_line_rvalue', 'scale_line_rvalue']:
-        del ds_pxr4[d]
-    rename_dict = {'location_line_slope': 'alpha',
-                   'scale_line_slope': 'beta'}
-    ds_pxr4.rename(rename_dict, inplace=True)
-    # Compute ratio
-    ds_all = ds_source.sel(scaling_extent='all')
-    ds_daily =  ds_source.sel(scaling_extent='daily')
-    ds_pxr4['alpha_ratio'] = ds_all['location_line_slope'] / ds_daily['location_line_slope']
-    ds_pxr4['beta_ratio'] = ds_all['scale_line_slope'] / ds_daily['scale_line_slope']
+    ds_pxr4 = ds_source[['filliben_stat', 'filliben_crit', 'KS_D', 'Dcrit']].rename({'KS_D': 'D'})
+    # Extract CI
+    params = extract_ci(ds_source, 'gev_scaling')
+    ds_pxr4['a'] = 10**params['location'].to_dataset(dim='scaling_param')['intercept']
+    ds_pxr4['alpha'] = params['location'].to_dataset(dim='scaling_param')['slope']
+    ds_pxr4['b'] = 10**params['scale'].to_dataset(dim='scaling_param')['intercept']
+    ds_pxr4['beta'] = params['scale'].to_dataset(dim='scaling_param')['slope']
+
+    ds_pxr4['location_r2'] = params['location'].to_dataset(dim='scaling_param')['rsquared']
+    ds_pxr4['scale_r2'] = params['scale'].to_dataset(dim='scaling_param')['rsquared']
     # Metadata
     apply_common_metadata(ds_pxr4)
     ds_pxr4.attrs.update(metadata['pxr4'])
@@ -71,8 +79,8 @@ def write_datasets(ds_source):
     # print(ds_source)
     ds_pxr2 = gen_pxr2(ds_source)
     ds_pxr2.to_netcdf(os.path.join(DATA_DIR, PXR2))
+
     ds_pxr4 = gen_pxr4(ds_source)
-    # print(ds_pxr4)
     ds_pxr4.to_netcdf(os.path.join(DATA_DIR, PXR4))
 
 
@@ -87,9 +95,7 @@ def test_datasets():
 
 
 def main():
-    source_path = os.path.join(DATA_DIR, SOURCE)
-    ds_source = xr.open_zarr(source_path).sel(gumbel_fit=b'scipy', drop=True).sel(scaling_extent=[b'all', b'daily'])
-    ds_source['scaling_extent'] = ds_source['scaling_extent'].astype(str)
+    ds_source = xr.open_zarr(SOURCE_PATH)
     write_datasets(ds_source)
     test_datasets()
 
