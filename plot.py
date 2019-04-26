@@ -52,10 +52,11 @@ STUDY_SITES = {
             #    'Beijing': (39.92, 116.38), 'New Delhi': (28.614, 77.21),
             #    'Niamey': (13.512, 2.125), #'Jeddah': (21.54, 39.173), 'Cape Town': (-33.925278, 18.4238),
             #    'Nairobi': (-1.28, 36.82), #'Brussels': (50.85, 4.35),
-               'Santiago': (-33.45, -70.67), #'New York City': (40.72, -74.0),
+            #    'Santiago': (-33.45, -70.67), #'New York City': (40.72, -74.0),
             #    'Mexico City': (19.43, -99.13), 'Vancouver': (49.25, -123.1),
-               'Vienna': (48.2, 16.367),
-               'Natal': (-5.78, -35.2)
+            #    'Vienna': (48.2, 16.367),
+            #    'Natal': (-5.78, -35.2),
+               'Surakarta': (-7.57, 110.817), 'Semarang': (-6.97, 110.417)
                }
 
 XTICKS = [1, 3, 6, 12, 24, 48, 120, 360]
@@ -1159,6 +1160,22 @@ def plot_IDF(ds, coords, return_periods, fig_name, title=''):
     plt.close()
 
 
+def scatter_ams(ds, study_sites, fig_title, fig_name):
+    assert len(study_sites) == 2
+    ams = postprocessing.combine_ds_per_site(study_sites, ds_cont={'ERA5': ds})['annual_max'].sel(source='ERA5', duration=1, drop=True)
+    df_ams = ams.to_pandas().transpose()
+    print(df_ams.iloc[:, 0])
+    # spearman rho
+    rho = helper.spearman_rho(df_ams.iloc[:, 0], df_ams.iloc[:, 1])
+    print(rho)
+    # plot
+    ax = df_ams.plot.scatter(0, 1)
+    ax.set_title(fig_title)
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.close()
+
+
 def main():
     ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
     # Drop Gibraltar
@@ -1198,8 +1215,8 @@ def main():
     # plot_intensities_errors_percent(ds_i['mdpe'], 'MdPE', 'MdPE_intensities.pdf')
     # plot_scaling_intensity_error(ds_era, dim=['longitude', 'latitude'], fig_name='MPE_intensities_scaled.pdf')
 
-    plot_IDF(ds_era, STUDY_SITES['Vienna'], [2, 10, 100], 'IDF_Vienna.png', title='IDF for Vienna from PXR-2')
- 
+    # plot_IDF(ds_era, STUDY_SITES['Vienna'], [2, 10, 100], 'IDF_Vienna.png', title='IDF for Vienna from PXR-2')
+
     ##############
 
     # fig_maps_gev_scaled24h(ds_era)
@@ -1229,7 +1246,7 @@ def main():
     #            cbar_label='intensity (mm/h)',
     #            fig_name='2018_max.png')
 
-
+    scatter_ams(ds_era, STUDY_SITES, fig_title='Comparison in 24h annual maxima (mm/h), 1979-2018', fig_name='ams_scatter.pdf')
 
 if __name__ == "__main__":
     sys.exit(main())
