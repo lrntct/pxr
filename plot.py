@@ -1,13 +1,26 @@
 # -*- coding: utf8 -*-
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+
 # Headless plotting
 import matplotlib
 matplotlib.use("Agg")
 
 import sys
 import os
-import datetime
 import math
-import itertools
 import subprocess
 
 import numpy as np
@@ -17,12 +30,12 @@ import geopandas as gpd
 import shapely.geometry
 import seaborn as sns
 import cartopy as ctpy
-import scipy.stats
 
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter, ScalarFormatter
 
+import config
 import ev_quantiles
 import helper
 import postprocessing
@@ -30,16 +43,10 @@ import postprocessing
 # Increase DPI of figures
 matplotlib.rcParams['savefig.dpi'] = 200
 
-DATA_DIR = '/home/lunet/gylc4/geodata/ERA5/'
-ERA_AMS_FILE = 'era5_1979-2018_ams_gof.zarr'
-MIDAS_AMS_FILE = '../data/MIDAS/midas_1979-2018_ams_gof.zarr'
-PLOT_DIR = '../plot'
-ERA_PRECIP_FILE = 'era5_1979-2018_precip.zarr'
-MIDAS_PRECIP_FILE = '../data/MIDAS/midas_1979-2018_precip_select.zarr'
+plot_dir = config.plot['dir']
 
-MIDAS_SUM = '../data/midas_sum_uk.tiff'
-MIDAS_STATIONS = '../data/MIDAS/midas.gpkg'
-NE_LAND = '../data/ne_land_10m.gpkg'
+midas_stations = config.plot['station_map']
+basemap = config.plot['base_map']
 
 EXTRACT = dict(latitude=slice(45, -45),
                longitude=slice(0, 180))
@@ -95,7 +102,7 @@ def single_map(da, cbar_label, title, fig_name, center=None, reverse=False):
                        cbar_kwargs=dict(orientation='horizontal', label=cbar_label))
     ax_p.coastlines(linewidth=.5, color='black')
     plt.title(title)
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -138,7 +145,7 @@ def multi_maps(da_list, disp_names, value_name, fig_name,
         ax.coastlines(linewidth=.5, color='black')
         ax.set_title(disp_name)
     # plt.tight_layout()
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -273,7 +280,7 @@ def plot_scaling_per_site(ds, fig_name):
     lgd = fig.legend(lines, labels, loc='lower center', ncol=lgd_ncol)
     plt.tight_layout()
     plt.subplots_adjust(bottom=.2, wspace=None, hspace=None)
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -287,7 +294,7 @@ def plot_hourly(ds, sites, fig_name):
     ds_sites = xr.concat(ds_list, dim='site').drop(drop_coords)
     ds_sites.coords['site'] = list(sites.keys())
     p = ds_sites['precipitation'].plot(col='site')
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -369,7 +376,7 @@ def probability_plot(ds, sites, fig_name):
 
     # plt.tight_layout()
     plt.subplots_adjust(bottom=.24, wspace=None, hspace=None)
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -385,7 +392,7 @@ def plot_gauges_data(ds, ymin, ymax, fig_name):
     ax.set_yticks(range(len(labels)))
     ax.set_yticklabels(labels)
     plt.tight_layout()
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -416,15 +423,15 @@ def plot_gauges_map_from_ds(ds, id_dim, fig_name, global_extent=True):
                             )
     ax_p.coastlines(linewidth=.3, color='black')
     gdf.plot(ax=ax_p, markersize=5, transform=ctpy.crs.PlateCarree())
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
 def fig_gauges_map(fig_name):
     source_crs = ctpy.crs.PlateCarree()
     display_crs =  ctpy.crs.OSGB()
-    midas = gpd.read_file(MIDAS_STATIONS)
-    ne_land = gpd.read_file(NE_LAND)
+    midas = gpd.read_file(midas_stations)
+    ne_land = gpd.read_file(basemap)
 
     # Extent of the UK
     xmin = -7
@@ -448,7 +455,7 @@ def fig_gauges_map(fig_name):
                         alpha=0.4,
                         )
 
-    fig_path = os.path.join(PLOT_DIR, fig_name)
+    fig_path = os.path.join(plot_dir, fig_name)
     plt.savefig(fig_path)
     subprocess.call(['pdfcrop', '--margins', '10', fig_path, fig_path])
     plt.close()
@@ -474,7 +481,7 @@ def hexbin(da1, da2, xlabel, ylabel, fig_name):
                       label='Number of cells', norm=norm, extend='both')
     # cb.set_label('# of cells')
     plt.tight_layout()
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -608,7 +615,7 @@ def fig_scaling_differences_all(ds_era, ds_midas, fig_name):
     fig.legend(handles, labels, loc='lower center', ncol=2)
     plt.tight_layout()
     plt.subplots_adjust(bottom=0.35, left=0.15, wspace=None, hspace=None)
-    plt.savefig(os.path.join(PLOT_DIR, fig_name), bbox='tight')
+    plt.savefig(os.path.join(plot_dir, fig_name), bbox='tight')
     plt.close()
 
 
@@ -922,7 +929,7 @@ def fig_midas_mean(ds_pairs, fig_name):
     lgd = fig.legend(lines, labels, loc='lower center', ncol=3)
     plt.tight_layout()
     plt.subplots_adjust(bottom=.1, wspace=None, hspace=None)
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -951,7 +958,7 @@ def scatter_intensity(da_i, fig_name):
     lgd = fig.legend(lines, labels, loc='lower center', ncol=4)
     plt.tight_layout()
     plt.subplots_adjust(bottom=.04, wspace=None, hspace=None)
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -969,7 +976,7 @@ def plot_ARF(da, fig_name):
     fg = fg.map(plt.plot, 'duration', 'ERA5_rlm', color=C_PRIMARY_1).set(xscale = 'log')
     for ax in fg.axes.flatten():
         set_logd_xticks(ax)
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -1004,7 +1011,7 @@ def plot_intensities_AE(da, ylabel, fig_name):
     lgd = fig.legend(lines, labels, loc='lower center', ncol=2)
     plt.tight_layout()
     plt.subplots_adjust(bottom=.22, wspace=None, hspace=None)
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -1031,7 +1038,7 @@ def plot_intensities_errors_percent(da, ylabel, fig_name):
     lgd = fig.legend(lines, labels, loc='lower center', ncol=4)
     plt.tight_layout()
     plt.subplots_adjust(bottom=.22, wspace=None, hspace=None)
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -1080,7 +1087,7 @@ def plot_scaling_intensity_error(ds, dim, fig_name):
     fig.set_size_inches(width, height)
     plt.tight_layout()
     plt.subplots_adjust(right=.75, wspace=None, hspace=None)
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -1104,7 +1111,7 @@ def plot_hyetographs(ds_era, ds_midas, station_num, start, end, fig_name):
     lines, labels = ax.get_legend_handles_labels()
     lgd = fig.legend(lines, labels, loc='lower center', ncol=2)
     plt.subplots_adjust(bottom=.22, wspace=None, hspace=None)
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -1156,7 +1163,7 @@ def plot_IDF(ds, coords, return_periods, fig_name, title=''):
     lines, labels = ax.get_legend_handles_labels()
     # print(lines)
     plt.tight_layout()
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
@@ -1172,18 +1179,19 @@ def scatter_ams(ds, study_sites, fig_title, fig_name):
     ax = df_ams.plot.scatter(0, 1)
     ax.set_title(fig_title)
     plt.tight_layout()
-    plt.savefig(os.path.join(PLOT_DIR, fig_name))
+    plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
 
 def main():
-    ds_era = xr.open_zarr(os.path.join(DATA_DIR, ERA_AMS_FILE))
+    ds_era = xr.open_zarr(os.path.join(config.data_dir['era5'], config.era5_results))
     # Drop Gibraltar
-    ds_midas = xr.open_zarr(MIDAS_AMS_FILE).drop([1585], dim='station')
+    ds_midas = xr.open_zarr(os.path.join(config.data_dir['midas'], config.midas_results))
+    ds_midas = ds_midas.drop([1585], dim='station')
     # print(ds_era)
 
     # era_precip = xr.open_zarr(os.path.join(DATA_DIR, ERA_PRECIP_FILE))
-    # midas_precip = xr.open_zarr(MIDAS_PRECIP_FILE)
+    # midas_precip = xr.open_zarr(os.path.join(config.data_dir['midas'], config.hourly_filename['midas'])
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='1980-01', end='1980-12', fig_name='hyetographs_23_1980.pdf')
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='1979', end='2018', fig_name='hyetographs_23_1979-2018.pdf')
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='2017', end='2018', fig_name='hyetographs_23_2017-2018.pdf')

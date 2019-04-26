@@ -26,7 +26,12 @@ data_dir = {'era5': '/home/lunet/gylc4/geodata/ERA5/',
 hourly_filename = {'era5': 'yearly_zarr',
                    'midas': 'midas_{}-{}_precip_select.zarr'.format(analysis['start'], analysis['end'])}
 
-plot_dir = '../plot'
+plot = dict(dir='../plot',
+            # Vector of location of station points
+            station_map='../data/MIDAS/midas.gpkg',
+            # A vector basemap for the station map
+            base_map='../data/ne_land_10m.gpkg',
+)
 
 
 ## Automaticly generate filenames ##
