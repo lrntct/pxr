@@ -53,7 +53,7 @@ def combine_ds_per_site(site_list, ds_cont=None, ds_points=None):
     if not ds_cont and not ds_cont:
         raise ValueError('No Dataset provided')
 
-    keep_vars = ['gev', 'gev_scaled', 'gev_scaling']
+    keep_vars = ['annual_max', 'gev', 'gev_scaled', 'gev_scaling']
 
     # Extract sites values from the datasets. combine all ds along a new 'source' dimension
     ds_site_list = []
