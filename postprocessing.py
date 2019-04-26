@@ -1,20 +1,23 @@
 # -*- coding: utf8 -*-
-import matplotlib
-matplotlib.use("Agg")
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import sys
-import os
-import datetime
-import math
-import subprocess
 
 import numpy as np
 import xarray as xr
 import pandas as pd
-import geopandas as gpd
-import shapely.geometry
-import seaborn as sns
-import cartopy as ctpy
 import scipy.stats
 from uncertainties import ufloat, unumpy
 
@@ -352,9 +355,6 @@ def get_quantile_dict(quantiles, **kwargs):
             df_list.append((source, df_q))
         df_dict[param] = df_list
     return df_dict
-
-
-
 
 
 def main():
