@@ -14,19 +14,10 @@ from dask.distributed import Client, LocalCluster
 import zarr
 import scipy.stats
 
+import config
 import ev_fit
 import gof
 import helper
-
-
-DATA_DIR_ERA = '/home/lunet/gylc4/geodata/ERA5/'
-DATA_DIR_ERA_PRECIP = '/home/lunet/gylc4/geodata/ERA5/yearly_zarr'
-DATA_DIR_MIDAS = '../data/MIDAS/'
-HOURLY_ERA5 = 'era5_1979-2018_precip.zarr'
-HOURLY_MIDAS = 'midas_1979-2018_precip_select.zarr'
-
-AMS_BASENAME = '{}_{}-{}_ams.zarr'
-ANNUAL_BASENAME = '{}_{}-{}_ams_{}.zarr'
 
 
 # Extract
@@ -56,12 +47,13 @@ ERA5_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 20*4, 'longitude': 20*4}
 # When resolution is 1 degree
 ANNUAL_CHUNKS_1DEG = {'year': -1, 'duration': -1, 'latitude': 30, 'longitude': 30}
 EXTRACT_CHUNKS = {'year': -1, 'duration':-1, 'latitude': 20, 'longitude': 20}
-MIDAS_CHUNKS = {'year': -1, 'duration':-1, 'station': 1}
+MIDAS_CHUNKS = {'year': -1, 'duration':-1, 'station': -1}
 GEN_FLOAT_ENCODING = {'dtype': DTYPE, 'compressor': zarr.Blosc(cname='lz4', clevel=9)}
 STR_ENCODING = {'dtype': 'U'}
 COORDS_ENCODING = {'ci': STR_ENCODING,
                    'ev_param': STR_ENCODING,
                    'scaling_param': STR_ENCODING,
+                   'src_name': STR_ENCODING,
                   }
 
 
@@ -202,33 +194,14 @@ def to_zarr(ds, path):
 
 def main():
     # Select the source ('era5' or 'midas')
-    SOURCE = 'era5'
-    BS_SAMPLE = 1000
-    START = 1979
-    END = 2018
-    EV_SHAPE = -0.114
+    source = config.analysis['source']
+    BS_SAMPLE = config.analysis['bootstrap_samples']
+    start = config.analysis['start']
+    end = config.analysis['end']
+    EV_SHAPE = config.analysis['ev_shape']
 
-    if SOURCE == 'era5':
-        temp_res = 1  # temporal resolution in hours
-        precip_var = 'precipitation'
-        time_var = 'time'
-        data_dir = DATA_DIR_ERA
-        hourly_path = os.path.join(data_dir, HOURLY_ERA5)
-        chunk_size = ERA5_CHUNKS
-    elif SOURCE == 'midas':
-        temp_res = 1  # temporal resolution in hours
-        precip_var = 'prcp_amt'
-        time_var = 'end_time'
-        data_dir = DATA_DIR_MIDAS
-        hourly_path = os.path.join(data_dir, HOURLY_MIDAS)
-        chunk_size = MIDAS_CHUNKS
-    else:
-        raise KeyError('Unknown source: {}'.format(SOURCE))
-
-    ams_path = os.path.join(data_dir, AMS_BASENAME.format(SOURCE, START, END))
-    path_ranked = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'ranked'))
-    path_gev = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'gev'))
-    path_gof = os.path.join(data_dir, ANNUAL_BASENAME.format(SOURCE, START, END, 'gof'))
+    data_dir = config.data_dir[source]
+    hourly_path = os.path.join(data_dir, config.hourly_filename[source])
 
     with ProgressBar(), np.warnings.catch_warnings():
         # Those warnings are expected.
@@ -236,23 +209,31 @@ def main():
         np.warnings.filterwarnings('ignore', r'invalid value encountered in log10')
 
         # Get annual maxima #
-        # print('## AMS: {} ##'.format(datetime.now()))
-        # amax_of_yearly_files(DATA_DIR_ERA_PRECIP, START, END, precip_var, time_var, DURATIONS_ALL, temp_res, chunk_size)
-        # ams = concat_amax(DATA_DIR_ERA_PRECIP, START, END).chunk(chunk_size)
-        # ams = step1_annual_maxs_of_roll_mean(hourly, precip_var, time_var, DURATIONS_ALL, temp_res).chunk(chunk_size)
-        # print(ams)
-        # to_zarr(ams, ams_path)
-
-        # reshape to 1 deg
-        # ds_r = helper.da_pool(ds_trimmed['annual_max'], .25, 1).to_dataset().chunk(ANNUAL_CHUNKS_1DEG)
-        # print(ds_r)
+        print('## AMS: {} ##'.format(datetime.now()))
+        if source == 'era5':
+            chunk_size = ERA5_CHUNKS
+            # Due to its size, era5 data is split in files by year
+            amax_of_yearly_files(hourly_path, start, end,
+                                 precip_var='precipitation', time_dim='time',
+                                 durations=DURATIONS_ALL, temp_res=1, chunks=chunk_size)
+            ams = concat_amax(hourly_path, start, end).chunk(chunk_size)
+        elif source == 'midas':
+            chunk_size = MIDAS_CHUNKS
+            hourly = xr.open_zarr(hourly_path)
+            ams = amax_from_file(hourly, precip_var='prcp_amt', time_dim='end_time',
+                                 durations=DURATIONS_ALL, temp_res=1).chunk(chunk_size)
+        else:
+            raise KeyError('Unknown source: {}'.format(source))
+        print(ams)
+        print(config.path_ams)
+        to_zarr(ams, config.path_ams)
 
         ## Rank # For unknown reason Dask distributed create buggy ECDF.
-        # ams = xr.open_zarr(ams_path).sel(year=slice(START, END))
-        # print('## Rank: {} ##'.format(datetime.now()))
-        # ds_ranked = step2_rank_ecdf(ams, chunk_size)
-        # print(ds_ranked)
-        # to_zarr(ds_ranked, path_ranked)
+        ams = xr.open_zarr(config.path_ams).sel(year=slice(start, end))
+        print('## Rank: {} ##'.format(datetime.now()))
+        ds_ranked = step2_rank_ecdf(ams, chunk_size)
+        print(ds_ranked)
+        to_zarr(ds_ranked, config.path_ranked)
 
         ## For the next steps, use dask distributed LocalCluster (uses processes instead of threads)
         cluster = LocalCluster(n_workers=32, threads_per_worker=1)
@@ -261,17 +242,17 @@ def main():
 
         ## fit EV ##
         # print('## Fit EV: {} ##'.format(datetime.now()))
-        # ds_ranked = xr.open_zarr(path_ranked)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
+        # ds_ranked = xr.open_zarr(config.path_ranked)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
         # ds_gev = step3_fit_gev_with_ci(ds_ranked, BS_SAMPLE, ev_shape=EV_SHAPE)
         # print(ds_gev)
-        # to_zarr(ds_gev, path_gev)
+        # to_zarr(ds_gev, config.path_gev)
 
         ## GoF ##
-        print('## Goodness of fit: {} ##'.format(datetime.now()))
-        ds_gev = xr.open_zarr(path_gev)
-        ds_gof = step4_goodness_of_fit(ds_gev, chunk_size, ev_shape=EV_SHAPE)
-        print(ds_gof)
-        to_zarr(ds_gof, path_gof)
+        # print('## Goodness of fit: {} ##'.format(datetime.now()))
+        # ds_gev = xr.open_zarr(config.path_gev)
+        # ds_gof = step4_goodness_of_fit(ds_gev, chunk_size, ev_shape=EV_SHAPE)
+        # print(ds_gof)
+        # to_zarr(ds_gof, config.path_gof)
 
 
 if __name__ == "__main__":
