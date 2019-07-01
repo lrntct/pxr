@@ -23,9 +23,9 @@ import toml
 
 SOURCE_PATH = '/home/lunet/gylc4/geodata/ERA5/era5_1979-2018_ams_gof.zarr'
 DATA_DIR = '../data'
-METDATA = 'metadata.toml'
+METADATA = 'metadata.toml'
 
-with open(METDATA, 'r') as toml_file:
+with open(METADATA, 'r') as toml_file:
     metadata = toml.loads(toml_file.read())
 
 # output
@@ -112,8 +112,8 @@ def test_datasets():
 
 
 def main():
-    ds_source = xr.open_zarr(SOURCE_PATH)
-    write_datasets(ds_source)
+    # ds_source = xr.open_zarr(SOURCE_PATH)
+    # write_datasets(ds_source)
     test_datasets()
 
 
