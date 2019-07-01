@@ -29,6 +29,7 @@ import pandas as pd
 import geopandas as gpd
 import shapely.geometry
 import seaborn as sns
+import toml
 import cartopy as ctpy
 
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
@@ -55,15 +56,15 @@ EXTRACT = dict(latitude=slice(45, -45),
 # STUDY_SITES = {'Kampala': (0.317, 32.616),
 #                'Kisumu': (0.1, 34.75)}
 STUDY_SITES = {
-            #    'Jakarta': (-6.2, 106.816), 'Sydney': (-33.865, 151.209),
-            #    'Beijing': (39.92, 116.38), 'New Delhi': (28.614, 77.21),
-            #    'Niamey': (13.512, 2.125), #'Jeddah': (21.54, 39.173), 'Cape Town': (-33.925278, 18.4238),
-            #    'Nairobi': (-1.28, 36.82), #'Brussels': (50.85, 4.35),
-            #    'Santiago': (-33.45, -70.67), #'New York City': (40.72, -74.0),
-            #    'Mexico City': (19.43, -99.13), 'Vancouver': (49.25, -123.1),
+               'Jakarta': (-6.2, 106.816), 'Sydney': (-33.865, 151.209),
+               'Beijing': (39.92, 116.38), 'New Delhi': (28.614, 77.21),
+               'Niamey': (13.512, 2.125), #'Jeddah': (21.54, 39.173), 'Cape Town': (-33.925278, 18.4238),
+               'Nairobi': (-1.28, 36.82), #'Brussels': (50.85, 4.35),
+               'Santiago': (-33.45, -70.67), #'New York City': (40.72, -74.0),
+               'Mexico City': (19.43, -99.13), # 'Vancouver': (49.25, -123.1),
             #    'Vienna': (48.2, 16.367),
-            #    'Natal': (-5.78, -35.2),
-               'Surakarta': (-7.57, 110.817), 'Semarang': (-6.97, 110.417)
+               'Natal': (-5.78, -35.2),
+            #    'Surakarta': (-7.57, 110.817), 'Semarang': (-6.97, 110.417)
                }
 
 XTICKS = [1, 3, 6, 12, 24, 48, 120, 360]
@@ -74,6 +75,15 @@ C_SECONDARY_1 = '#6ba9ca'
 C_PRIMARY_2 = '#33a02c'
 C_SECONDARY_2 = '#89c653'
 
+METADATA = 'metadata.toml'
+
+with open(METADATA, 'r') as toml_file:
+    metadata = toml.loads(toml_file.read())
+
+# output
+PXR2 = f"pxr2-{metadata['common']['version']}.nc"
+PXR4 = f"pxr4-{metadata['common']['version']}.nc"
+
 
 def set_logd_xticks(ax, xmin=min(XTICKS), xmax=max(XTICKS)):
     xticks = [i for i in XTICKS if i <= xmax and i >= xmin]
@@ -82,24 +92,21 @@ def set_logd_xticks(ax, xmin=min(XTICKS), xmax=max(XTICKS)):
     ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
 
 
-def single_map(da, cbar_label, title, fig_name, center=None, reverse=False):
+def single_map(da, cbar_label, title, fig_name, center=False, reverse=False):
     """https://cbrownley.wordpress.com/2018/05/15/visualizing-global-land-temperatures-in-python-with-scrapy-xarray-and-cartopy/
     """
     plt.figure(figsize=(8, 5))
     ax_p = plt.gca(projection=ctpy.crs.EqualEarth(), aspect='auto')
-    if center is not None:
+    if center is True:
         if reverse:
             cmap = 'RdBu_r'
         else:
             cmap = 'RdBu'
-        da.plot.imshow(ax=ax_p, transform=ctpy.crs.PlateCarree(),
-                       robust=True, cmap=cmap, center=center,
-                    #    add_colorbar=True,
-                       cbar_kwargs=dict(orientation='horizontal', label=cbar_label))
     else:
-        da.plot.imshow(ax=ax_p, transform=ctpy.crs.PlateCarree(),
-                       robust=True, cmap='viridis',
-                       cbar_kwargs=dict(orientation='horizontal', label=cbar_label))
+        cmap='viridis'
+    da.plot.imshow(ax=ax_p, transform=ctpy.crs.PlateCarree(),
+                   robust=True, cmap=cmap, center=center,
+                   cbar_kwargs=dict(orientation='horizontal', label=cbar_label))
     ax_p.coastlines(linewidth=.5, color='black')
     plt.title(title)
     plt.savefig(os.path.join(plot_dir, fig_name))
@@ -107,7 +114,7 @@ def single_map(da, cbar_label, title, fig_name, center=None, reverse=False):
 
 
 def multi_maps(da_list, disp_names, value_name, fig_name,
-               sqr=False, center=None, reverse=False, robust=True):
+               sqr=False, center=False, reverse=False, robust=True, onebar=True):
     crs = ctpy.crs.EqualEarth()
     # reshape variables as dimension
     da_list2 = []
@@ -118,33 +125,42 @@ def multi_maps(da_list, disp_names, value_name, fig_name,
             da_sel = da.expand_dims('param')
         da_sel.coords['param'] = [da.name]
         da_list2.append(da_sel)
-    da = xr.concat(da_list2, 'param')
-    da.attrs['long_name'] = value_name  # Color bar title
+    da_all = xr.concat(da_list2, 'param')
+    da_all.attrs['long_name'] = value_name  # Color bar title
     # Actual plot
-    # print(da['longitude'])
-    aspect = len(da['longitude']) / len(da['latitude'])
-    if center:
+    # print(da_all['longitude'])
+    aspect = len(da_all['longitude']) / len(da_all['latitude'])
+    if center is True:
         if reverse:
             cmap = 'RdBu_r'
         else:
             cmap = 'RdBu'
-        p = da.plot(col='param', col_wrap=1,
-                    transform=ctpy.crs.PlateCarree(), aspect=aspect,
-                    cmap=cmap, center=center,
-                    robust=robust, extend='both',
-                    subplot_kws=dict(projection=crs)
-                    )
     else:
-        p = da.plot(col='param', col_wrap=1,
-                    transform=ctpy.crs.PlateCarree(), aspect=aspect,
-                    cmap='viridis',
-                    robust=robust, extend='both',
-                    subplot_kws=dict(projection=crs)
-                    )
-    for ax, disp_name in zip(p.axes.flat, disp_names):
-        ax.coastlines(linewidth=.5, color='black')
-        ax.set_title(disp_name)
-    # plt.tight_layout()
+        cmap = 'viridis'
+    if onebar:  # One shared colorbar
+        fg = da_all.plot(col='param', col_wrap=1,
+                         transform=ctpy.crs.PlateCarree(), aspect=aspect,
+                         cmap=cmap, center=center,
+                         robust=robust, extend='both',
+                         subplot_kws=dict(projection=crs)
+                         )
+        for ax, disp_name in zip(fg.axes.flat, disp_names):
+            ax.coastlines(linewidth=.5, color='black')
+            ax.set_title(disp_name)
+    else:
+        fig, axes = plt.subplots(len(da_list2), 1, sharey=False, sharex=False,
+                                subplot_kw=dict(projection=crs),
+                                 )
+        for da, ax, disp_name in zip(da_list2, axes, disp_names):
+            da = da.isel(param=0, drop=True)
+            print(da)
+            da.plot.imshow(ax=ax, transform=ctpy.crs.PlateCarree(),
+                           robust=True, cmap=cmap, center=center,
+                           cbar_kwargs=dict(orientation='vertical', label=da.attrs['units']))
+            ax.coastlines(linewidth=.5, color='black')
+            ax.set_title(disp_name)
+
+    plt.tight_layout()
     plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
@@ -518,11 +534,12 @@ def fig_map_filliben(ds):
 
 
 def fig_maps_gev24h(ds):
-    da_loc = ds['gev'].sel(ci='estimate', duration=24, ev_param='location').rename('location')
-    da_scale = ds['gev'].sel(ci='estimate', duration=24, ev_param='scale').rename('scale')
+    da_loc = ds['location'].sel(duration=24)
+    da_scale = ds['scale'].sel(duration=24)
     multi_maps([da_loc, da_scale],
                 ['Location $\mu$', 'Scale $\sigma$'],
-                'Parameter value', 'gev_params_24h_1979-2018.png')
+                'Parameter value', 'gev_params_24h_1979-2018_twobars.png',
+                onebar=False)
 
 
 def fig_maps_gev_scaled24h(ds):
@@ -1184,10 +1201,13 @@ def scatter_ams(ds, study_sites, fig_title, fig_name):
 
 
 def main():
-    ds_era = xr.open_zarr(os.path.join(config.data_dir['era5'], config.era5_results))
+    # ds_era = xr.open_zarr(os.path.join(config.data_dir['era5'], config.era5_results))
+    ds_pxr2 = xr.open_dataset(os.path.join('../data', PXR2))
+    ds_pxr4 = xr.open_dataset(os.path.join('../data', PXR4))
+    # print(ds_pxr2)
     # Drop Gibraltar
-    ds_midas = xr.open_zarr(os.path.join(config.data_dir['midas'], config.midas_results))
-    ds_midas = ds_midas.drop([1585], dim='station')
+    # ds_midas = xr.open_zarr(os.path.join(config.data_dir['midas'], config.midas_results))
+    # ds_midas = ds_midas.drop([1585], dim='station')
     # print(ds_era)
 
     # era_precip = xr.open_zarr(os.path.join(DATA_DIR, ERA_PRECIP_FILE))
@@ -1204,7 +1224,7 @@ def main():
     # fig_map_KS(ds_era)
     # fig_map_filliben(ds_era)
 
-    # fig_maps_gev24h(ds_era)
+    fig_maps_gev24h(ds_pxr2)
     # fig_scaling_gradients_maps(ds_era)
 
     # fig_maps_rsquared(ds_era)
@@ -1254,7 +1274,7 @@ def main():
     #            cbar_label='intensity (mm/h)',
     #            fig_name='2018_max.png')
 
-    scatter_ams(ds_era, STUDY_SITES, fig_title='Comparison in 24h annual maxima (mm/h), 1979-2018', fig_name='ams_scatter.pdf')
+    # scatter_ams(ds_era, STUDY_SITES, fig_title='Comparison in 24h annual maxima (mm/h), 1979-2018', fig_name='ams_scatter.pdf')
 
 if __name__ == "__main__":
     sys.exit(main())
