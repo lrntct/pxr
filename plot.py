@@ -702,6 +702,13 @@ def fig_scaling_gradients_maps(ds):
                bar_labels=['$\\alpha$', '$\\beta$'])
 
 
+def fig_scaling_intersects_maps(ds):
+    multi_maps([ds['a'], ds['b']],
+               ['a', 'b'],
+               'Parameter value', 'scaling_intersects_1979-2018_twobars.png',
+               onebar=False,
+               bar_labels=['a', 'b'])
+
 def fig_scaling_gradients_ratio_maps(ds):
     """print maps of the ratio between the regression slopes obtain from daily and all durations
     """
@@ -1231,6 +1238,7 @@ def main():
 
     # fig_maps_gev24h(ds_pxr2)
     # fig_scaling_gradients_maps(ds_pxr4)
+    fig_scaling_intersects_maps(ds_pxr4)
 
     # fig_maps_rsquared(ds_era)
 
