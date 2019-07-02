@@ -114,7 +114,8 @@ def single_map(da, cbar_label, title, fig_name, center=False, reverse=False):
 
 
 def multi_maps(da_list, disp_names, value_name, fig_name,
-               sqr=False, center=False, reverse=False, robust=True, onebar=True):
+               sqr=False, center=False, reverse=False, robust=True,
+               onebar=True, bar_labels=None):
     crs = ctpy.crs.EqualEarth()
     # reshape variables as dimension
     da_list2 = []
@@ -151,16 +152,16 @@ def multi_maps(da_list, disp_names, value_name, fig_name,
         fig, axes = plt.subplots(len(da_list2), 1, sharey=False, sharex=False,
                                 subplot_kw=dict(projection=crs),
                                  )
-        for da, ax, disp_name in zip(da_list2, axes, disp_names):
+        for da, ax, disp_name, bar_label in zip(da_list2, axes, disp_names, bar_labels):
             da = da.isel(param=0, drop=True)
-            print(da)
+            # print(da)
             da.plot.imshow(ax=ax, transform=ctpy.crs.PlateCarree(),
                            robust=True, cmap=cmap, center=center,
-                           cbar_kwargs=dict(orientation='vertical', label=da.attrs['units']))
+                           cbar_kwargs=dict(orientation='vertical', label=bar_label))
             ax.coastlines(linewidth=.5, color='black')
             ax.set_title(disp_name)
+        plt.tight_layout()
 
-    plt.tight_layout()
     plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
@@ -536,10 +537,14 @@ def fig_map_filliben(ds):
 def fig_maps_gev24h(ds):
     da_loc = ds['location'].sel(duration=24)
     da_scale = ds['scale'].sel(duration=24)
+    print(da_loc)
+    print(da_scale)
     multi_maps([da_loc, da_scale],
-                ['Location $\mu$', 'Scale $\sigma$'],
-                'Parameter value', 'gev_params_24h_1979-2018_twobars.png',
-                onebar=False)
+               ['Location $\mu$', 'Scale $\sigma$'],
+               'Parameter value', 'gev_params_24h_1979-2018_twobars.png',
+               onebar=False,
+               bar_labels=[da_loc.attrs['units'], da_scale.attrs['units']]
+               )
 
 
 def fig_maps_gev_scaled24h(ds):
@@ -690,11 +695,11 @@ def fig_scaling_ratio_map(ds):
 
 
 def fig_scaling_gradients_maps(ds):
-    alpha = ds['gev_scaling'].sel(scaling_param='slope', ci='estimate', ev_param='location').rename('alpha')
-    beta = ds['gev_scaling'].sel(scaling_param='slope', ci='estimate', ev_param='scale').rename('beta')
-    multi_maps([alpha, beta],
-               ['$\\alpha$', '$\\beta$'],
-               'Parameter value', 'scaling_gradients_1979-2018.png')
+    multi_maps([ds['alpha'], ds['beta']],
+               ['Location scaling gradient $\\alpha$', 'Scale scaling gradient $\\beta$'],
+               'Parameter value', 'scaling_gradients_1979-2018_twobars.png',
+               onebar=False,
+               bar_labels=['$\\alpha$', '$\\beta$'])
 
 
 def fig_scaling_gradients_ratio_maps(ds):
@@ -1204,7 +1209,7 @@ def main():
     # ds_era = xr.open_zarr(os.path.join(config.data_dir['era5'], config.era5_results))
     ds_pxr2 = xr.open_dataset(os.path.join('../data', PXR2))
     ds_pxr4 = xr.open_dataset(os.path.join('../data', PXR4))
-    # print(ds_pxr2)
+    print(ds_pxr4)
     # Drop Gibraltar
     # ds_midas = xr.open_zarr(os.path.join(config.data_dir['midas'], config.midas_results))
     # ds_midas = ds_midas.drop([1585], dim='station')
@@ -1224,8 +1229,8 @@ def main():
     # fig_map_KS(ds_era)
     # fig_map_filliben(ds_era)
 
-    fig_maps_gev24h(ds_pxr2)
-    # fig_scaling_gradients_maps(ds_era)
+    # fig_maps_gev24h(ds_pxr2)
+    # fig_scaling_gradients_maps(ds_pxr4)
 
     # fig_maps_rsquared(ds_era)
 
