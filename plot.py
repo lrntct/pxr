@@ -31,6 +31,7 @@ import shapely.geometry
 import seaborn as sns
 import toml
 import cartopy as ctpy
+import scipy.stats
 
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import matplotlib.pyplot as plt
@@ -1212,6 +1213,17 @@ def scatter_ams(ds, study_sites, fig_title, fig_name):
     plt.close()
 
 
+def paired_test(ds):
+    """paired difference tests between alpha and beta
+    """
+    alpha = ds['alpha'].values.flatten()
+    beta = ds['beta'].values.flatten()
+    stat, pvalue = scipy.stats.wilcoxon(alpha, beta, zero_method='pratt')
+    print(stat, pvalue)
+    stat, pvalue = scipy.stats.ttest_rel(alpha, beta, nan_policy='omit')
+    print(stat, pvalue)
+
+
 def main():
     # ds_era = xr.open_zarr(os.path.join(config.data_dir['era5'], config.era5_results))
     ds_pxr2 = xr.open_dataset(os.path.join('../data', PXR2))
@@ -1228,6 +1240,7 @@ def main():
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='1979', end='2018', fig_name='hyetographs_23_1979-2018.pdf')
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='2017', end='2018', fig_name='hyetographs_23_2017-2018.pdf')
 
+    paired_test(ds_pxr4)
 
     ##########
     # In Manuscript
@@ -1238,7 +1251,7 @@ def main():
 
     # fig_maps_gev24h(ds_pxr2)
     # fig_scaling_gradients_maps(ds_pxr4)
-    fig_scaling_intersects_maps(ds_pxr4)
+    # fig_scaling_intersects_maps(ds_pxr4)
 
     # fig_maps_rsquared(ds_era)
 
