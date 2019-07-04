@@ -283,7 +283,7 @@ def plot_scaling_per_site(ds, fig_name):
                     color=styles['color'])
         lines, labels = ax.get_legend_handles_labels()
         ax.set_xlabel('$d$ (hours)')
-        ax.set_ylabel('$\mu, \sigma$')
+        ax.set_ylabel('$\mu, \sigma$ (mm/h)')
         # ax.set_xscale('log')
         # ax.set_yscale('log')
         sites_ax_list.append(ax)
@@ -1225,13 +1225,13 @@ def paired_test(ds):
 
 
 def main():
-    # ds_era = xr.open_zarr(os.path.join(config.data_dir['era5'], config.era5_results))
-    ds_pxr2 = xr.open_dataset(os.path.join('../data', PXR2))
-    ds_pxr4 = xr.open_dataset(os.path.join('../data', PXR4))
-    print(ds_pxr4)
+    ds_era = xr.open_zarr(os.path.join(config.data_dir['era5'], config.era5_results))
+    # ds_pxr2 = xr.open_dataset(os.path.join('../data', PXR2))
+    # ds_pxr4 = xr.open_dataset(os.path.join('../data', PXR4))
+    # print(ds_pxr4)
     # Drop Gibraltar
-    # ds_midas = xr.open_zarr(os.path.join(config.data_dir['midas'], config.midas_results))
-    # ds_midas = ds_midas.drop([1585], dim='station')
+    ds_midas = xr.open_zarr(os.path.join(config.data_dir['midas'], config.midas_results))
+    ds_midas = ds_midas.drop([1585], dim='station')
     # print(ds_era)
 
     # era_precip = xr.open_zarr(os.path.join(DATA_DIR, ERA_PRECIP_FILE))
@@ -1240,7 +1240,7 @@ def main():
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='1979', end='2018', fig_name='hyetographs_23_1979-2018.pdf')
     # plot_hyetographs(era_precip, midas_precip, station_num=23, start='2017', end='2018', fig_name='hyetographs_23_2017-2018.pdf')
 
-    paired_test(ds_pxr4)
+    # paired_test(ds_pxr4)
 
     ##########
     # In Manuscript
@@ -1261,8 +1261,8 @@ def main():
 
     # fig_gauges_map('midas_gauges_map.pdf')
 
-    # ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
-    # plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018_vienna.pdf')
+    ds_combined = postprocessing.combine_ds_per_site(STUDY_SITES, ds_cont={'ERA5': ds_era})
+    plot_scaling_per_site(ds_combined, 'sites_scaling_1979-2018.pdf')
     # print(ds_combined['gev_scaled'].sel(duration=[1, 24], station='Jakarta', ci=['estimate', '0.025', '0.975'], ev_param='location').load())
 
     # ds_i = postprocessing.estimate_intensities_errors(ds_era, ds_midas)

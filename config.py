@@ -18,7 +18,7 @@ analysis = dict(
 )
 
 # Where the data are stored on disk
-data_dir = {'era5': '/home/lunet/gylc4/geodata/ERA5/',
+data_dir = {'era5': '/media/drive2/ERA5/',
             'midas': '../data/MIDAS/',
 }
 
