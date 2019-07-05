@@ -300,7 +300,7 @@ def plot_scaling_per_site(ds, fig_name):
     lgd = fig.legend(lines, labels, loc='lower center', ncol=lgd_ncol)
     plt.tight_layout()
     # plt.subplots_adjust(bottom=.2, wspace=None, hspace=None)  # Talk (landscape)
-    plt.subplots_adjust(bottom=.1, wspace=None, hspace=None)  # Article (portrait)
+    plt.subplots_adjust(bottom=.12, wspace=None, hspace=None)  # Article (portrait)
     plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
