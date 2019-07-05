@@ -222,31 +222,31 @@ def main():
         np.warnings.filterwarnings('ignore', r'invalid value encountered in log10')
 
         # Get annual maxima #
-        print('## AMS: {} ##'.format(datetime.now()))
-        if source == 'era5':
-            chunk_size = ERA5_CHUNKS
-            # Due to its size, era5 data is split in files by year
-            amax_of_yearly_files(hourly_path, start, end,
-                                 precip_var='precipitation', time_dim='time',
-                                 durations=DURATIONS_ALL, temp_res=1, chunks=chunk_size)
-            ams = concat_amax(hourly_path, start, end).chunk(chunk_size)
-        elif source == 'midas':
-            chunk_size = MIDAS_CHUNKS
-            hourly = xr.open_zarr(hourly_path)
-            ams = amax_from_file(hourly, precip_var='prcp_amt', time_dim='end_time',
-                                 durations=DURATIONS_ALL, temp_res=1).chunk(chunk_size)
-        else:
-            raise KeyError('Unknown source: {}'.format(source))
-        print(ams)
-        print(config.path_ams)
-        to_zarr(ams, config.path_ams)
+        # print('## AMS: {} ##'.format(datetime.now()))
+        # if source == 'era5':
+        #     chunk_size = ERA5_CHUNKS
+        #     # Due to its size, era5 data is split in files by year
+        #     amax_of_yearly_files(hourly_path, start, end,
+        #                          precip_var='precipitation', time_dim='time',
+        #                          durations=DURATIONS_ALL, temp_res=1, chunks=chunk_size)
+        #     ams = concat_amax(hourly_path, start, end).chunk(chunk_size)
+        # elif source == 'midas':
+        #     chunk_size = MIDAS_CHUNKS
+        #     hourly = xr.open_zarr(hourly_path)
+        #     ams = amax_from_file(hourly, precip_var='prcp_amt', time_dim='end_time',
+        #                          durations=DURATIONS_ALL, temp_res=1).chunk(chunk_size)
+        # else:
+        #     raise KeyError('Unknown source: {}'.format(source))
+        # print(ams)
+        # print(config.path_ams)
+        # to_zarr(ams, config.path_ams)
 
         ## Rank # For unknown reason Dask distributed create buggy ECDF.
-        ams = xr.open_zarr(config.path_ams).sel(year=slice(start, end))
-        print('## Rank: {} ##'.format(datetime.now()))
-        ds_ranked = step2_rank_ecdf(ams, chunk_size)
-        print(ds_ranked)
-        to_zarr(ds_ranked, config.path_ranked)
+        # ams = xr.open_zarr(config.path_ams).sel(year=slice(start, end))
+        # print('## Rank: {} ##'.format(datetime.now()))
+        # ds_ranked = step2_rank_ecdf(ams, chunk_size)
+        # print(ds_ranked)
+        # to_zarr(ds_ranked, config.path_ranked)
 
         ## For the next steps, use dask distributed LocalCluster (uses processes instead of threads)
         cluster = LocalCluster(n_workers=32, threads_per_worker=1)
@@ -254,18 +254,18 @@ def main():
         client = Client(cluster)
 
         ## fit EV ##
-        # print('## Fit EV: {} ##'.format(datetime.now()))
-        # ds_ranked = xr.open_zarr(config.path_ranked)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
-        # ds_gev = step3_fit_gev_with_ci(ds_ranked, BS_SAMPLE, ev_shape=EV_SHAPE)
-        # print(ds_gev)
-        # to_zarr(ds_gev, config.path_gev)
+        print('## Fit EV: {} ##'.format(datetime.now()))
+        ds_ranked = xr.open_zarr(config.path_ranked)#.loc[EXTRACT].chunk(EXTRACT_CHUNKS)
+        ds_gev = step3_fit_gev_with_ci(ds_ranked, BS_SAMPLE, ev_shape=EV_SHAPE)
+        print(ds_gev)
+        to_zarr(ds_gev, config.path_gev)
 
         ## GoF ##
-        # print('## Goodness of fit: {} ##'.format(datetime.now()))
-        # ds_gev = xr.open_zarr(config.path_gev)
-        # ds_gof = step4_goodness_of_fit(ds_gev, chunk_size, ev_shape=EV_SHAPE)
-        # print(ds_gof)
-        # to_zarr(ds_gof, config.path_gof)
+        print('## Goodness of fit: {} ##'.format(datetime.now()))
+        ds_gev = xr.open_zarr(config.path_gev)
+        ds_gof = step4_goodness_of_fit(ds_gev, chunk_size, ev_shape=EV_SHAPE)
+        print(ds_gof)
+        to_zarr(ds_gof, config.path_gof)
 
 
 if __name__ == "__main__":

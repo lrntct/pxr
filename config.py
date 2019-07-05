@@ -7,14 +7,15 @@ import os
 
 analysis = dict(
             # Data on which the analysis is performed. 'era5' or 'midas'
-            source='midas',
+            source='era5',
             # Start and end years for preprocessing and analysis
             start=1979,
             end=2018,
             # Number of bootstrap samples
             bootstrap_samples=1000,
             # Set to None to estimate the GEV shape parameter. Negative: Fréchet
-            ev_shape=-0.114,
+            # ev_shape=-0.114,
+            ev_shape=None,
 )
 
 # Where the data are stored on disk
@@ -43,9 +44,9 @@ path_ams = os.path.join(data_dir[analysis['source']],
 path_ranked = os.path.join(data_dir[analysis['source']],
                            result_basename.format(analysis['source'], analysis['start'], analysis['end'], '_ranked'))
 path_gev = os.path.join(data_dir[analysis['source']],
-                        result_basename.format(analysis['source'], analysis['start'], analysis['end'], '_gev'))
+                        result_basename.format(analysis['source'], analysis['start'], analysis['end'], '_gev_kappa'))
 path_gof = os.path.join(data_dir[analysis['source']],
-                        result_basename.format(analysis['source'], analysis['start'], analysis['end'], '_gof'))
+                        result_basename.format(analysis['source'], analysis['start'], analysis['end'], '_gof_kappa'))
 
 # Data files used to plot and generate PXR dataset
 era5_results = result_basename.format('era5', analysis['start'], analysis['end'], '_gof')
