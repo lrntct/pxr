@@ -230,7 +230,7 @@ def plot_scaling_per_site(ds, fig_name):
     col_num = 2
     row_num = math.ceil(len(dict_df) / col_num)
     # fig_size = (9, 5)  # landscape
-    fig_size = (6, 8)  # portrait
+    fig_size = (6, 9)  # portrait
     fig = plt.figure(figsize=fig_size)
     ax_num = 1
 
@@ -299,7 +299,8 @@ def plot_scaling_per_site(ds, fig_name):
     lgd_ncol = math.ceil(len(labels) / 2)  # article (portrait)
     lgd = fig.legend(lines, labels, loc='lower center', ncol=lgd_ncol)
     plt.tight_layout()
-    plt.subplots_adjust(bottom=.2, wspace=None, hspace=None)
+    # plt.subplots_adjust(bottom=.2, wspace=None, hspace=None)  # Talk (landscape)
+    plt.subplots_adjust(bottom=.1, wspace=None, hspace=None)  # Article (portrait)
     plt.savefig(os.path.join(plot_dir, fig_name))
     plt.close()
 
