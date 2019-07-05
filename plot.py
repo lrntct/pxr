@@ -230,7 +230,7 @@ def plot_scaling_per_site(ds, fig_name):
     col_num = 2
     row_num = math.ceil(len(dict_df) / col_num)
     # fig_size = (9, 5)  # landscape
-    fig_size = (5, 7)  # portrait
+    fig_size = (5, 8)  # portrait
     fig = plt.figure(figsize=fig_size)
     ax_num = 1
 
@@ -295,7 +295,8 @@ def plot_scaling_per_site(ds, fig_name):
         set_logd_xticks(ax)
         ax.use_sticky_edges = False
         ax.autoscale()
-    lgd_ncol = math.ceil(len(labels) / 4)
+    # lgd_ncol = math.ceil(len(labels) / 4)  # talk (landscape)
+    lgd_ncol = math.ceil(len(labels) / 2)  # article (portrait)
     lgd = fig.legend(lines, labels, loc='lower center', ncol=lgd_ncol)
     plt.tight_layout()
     plt.subplots_adjust(bottom=.2, wspace=None, hspace=None)
