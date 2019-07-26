@@ -1,5 +1,5 @@
 [common]
-version = '2.0.1'
+version = '2.1.0'
 institution = "Department of Geography and Environment, Loughborough University"
 authors = "Laurent G. Courty, Rob L. Wilby, John K. Hillier, Louise J. Slater"
 source = "Generated using Copernicus Climate Change Service information [2019]"

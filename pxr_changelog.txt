@@ -1,6 +1,10 @@
 Parametrized eXtreme Rain (PXR)
 Changelog
 
+2.1.0
+26 July 2019
+- Add confidence interval to PXR-4.
+
 2.0.1
 25 April 2019
 - In PXR-2, the dimensions of 'filliben_stat' and 'D' are now in the same order as 'location'and 'scale'.
@@ -11,7 +15,7 @@ Changelog
 - Based on the GEV distribution with a fixed shape parameter.
 - Distribution parameters are estimated using the Probability-Weigthed moments.
 - Goodness of fit assessed with both the Filliben and the Lilliefors tests.
-- Uncertainty of the parameters estimated with the bootstrap method with 1000 samples
+- Uncertainty of the parameters (confidence interval) estimated with the bootstrap method with 1000 samples.
 - Only the scaling parameters obtained from all the durations are considered (PXR-4 only). 
 
 1.0.0

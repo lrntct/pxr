@@ -21,7 +21,7 @@ import xarray as xr
 import numpy as np
 import toml
 
-SOURCE_PATH = '/home/lunet/gylc4/geodata/ERA5/era5_1979-2018_ams_gof.zarr'
+SOURCE_PATH = '/home/laurent/Documents/era5_1979-2018_ams_gof.zarr'
 DATA_DIR = '../data'
 METADATA = 'metadata.toml'
 
@@ -79,13 +79,21 @@ def gen_pxr4(ds_source):
     ds_pxr4 = ds_source[['filliben_stat', 'filliben_crit', 'KS_D', 'Dcrit']].rename({'KS_D': 'D'})
     # Extract CI
     params = extract_ci(ds_source, 'gev_scaling')
+    # Estimates
     ds_pxr4['a'] = 10**params['location'].to_dataset(dim='scaling_param')['intercept']
     ds_pxr4['alpha'] = params['location'].to_dataset(dim='scaling_param')['slope']
     ds_pxr4['b'] = 10**params['scale'].to_dataset(dim='scaling_param')['intercept']
     ds_pxr4['beta'] = params['scale'].to_dataset(dim='scaling_param')['slope']
+    # CI
+    ds_pxr4['a_ci'] = params['location_ci'].sel(scaling_param='intercept')
+    ds_pxr4['alpha_ci'] = params['location_ci'].sel(scaling_param='slope')
+    ds_pxr4['b_ci'] = params['scale_ci'].sel(scaling_param='intercept')
+    ds_pxr4['beta_ci'] = params['scale_ci'].sel(scaling_param='slope')
 
     ds_pxr4['location_r2'] = params['location'].to_dataset(dim='scaling_param')['rsquared']
     ds_pxr4['scale_r2'] = params['scale'].to_dataset(dim='scaling_param')['rsquared']
+    ds_pxr4 = ds_pxr4.drop('scaling_param')
+
     # Metadata
     apply_common_metadata(ds_pxr4)
     ds_pxr4.attrs.update(metadata['pxr4'])
@@ -93,7 +101,6 @@ def gen_pxr4(ds_source):
 
 
 def write_datasets(ds_source):
-    # print(ds_source)
     ds_pxr2 = gen_pxr2(ds_source)
     ds_pxr2.to_netcdf(os.path.join(DATA_DIR, PXR2))
 
@@ -112,8 +119,9 @@ def test_datasets():
 
 
 def main():
-    # ds_source = xr.open_zarr(SOURCE_PATH)
-    # write_datasets(ds_source)
+    ds_source = xr.open_zarr(SOURCE_PATH)
+    print(ds_source)
+    write_datasets(ds_source)
     test_datasets()
 
 
