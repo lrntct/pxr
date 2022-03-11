@@ -28,7 +28,7 @@ VERSION = '2.1.0'
 PXR2 = f"pxr2-{VERSION}.nc"
 PXR4 = f"pxr4-{VERSION}.nc"
 
-LOC_MEX = (19.43, -99.13)  # Location of Mexico City, as an example
+LOC_MEX = (19.43, -99.13)  # Latitude and longitude of Mexico City, as an example
 SHAPE = -0.114  # PXR v2.1.0 is using a fixed value of the GEV shape parameter
 
 def gumbel_quantile(T, loc, scale):
@@ -55,8 +55,8 @@ def gev_quantile(T, loc, scale, shape):
 
 
 def get_single_intensity(ds_pxr2, return_period, duration, lat, lon):
-    """For a given location, duration and return period, return the intensity.
-    Return a float
+    """For a given location, duration and return period,
+    return the intensity as a float.
     """
     ds_select = ds_pxr2.sel(latitude=lat, longitude=lon, method='nearest')
     ds_select = ds_select.sel(duration=duration)
@@ -68,7 +68,7 @@ def get_single_intensity(ds_pxr2, return_period, duration, lat, lon):
 def get_point_idf(ds_pxr2, lat, lon, return_periods):
     """At a given location, calculate the IDF curves for
     a given list of return periods.
-    Return a 
+    Return a DataArray of intensities.
     """
     ds_select = ds_pxr2.sel(latitude=lat, longitude=lon, method='nearest')
     da_list = []
@@ -84,7 +84,7 @@ def get_point_idf(ds_pxr2, lat, lon, return_periods):
 
 def get_global_intensities(ds_pxr2, duration, return_period):
     """For a given return period and duration,
-    return a DataArray of global intensities
+    return a DataArray of global intensities.
     """
     ds_select = ds_pxr2.sel(duration=duration)
     intensities = gev_quantile(return_period, ds_select['location'],
@@ -122,7 +122,7 @@ def plot_point_idf(da_idf, fig_name):
 
 
 def plot_intensities_map(da, fig_name):
-    """Plot a map of intensities
+    """Plot a map of intensities.
     """
     plt.figure(figsize=(8, 5))
     ax_p = plt.axes(projection=ctpy.crs.EqualEarth(), aspect='auto')
